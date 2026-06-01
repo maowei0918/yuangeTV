@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>影视盒子</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<!-- 顶部导航 -->
+<div id="header">
+  <div id="header-title">影视盒子</div>
+  <div id="header-actions">
+    <button id="btn-search" class="icon-btn">🔍</button>
+    <button id="btn-sites" class="icon-btn">📡</button>
+    <button id="btn-favorites" class="icon-btn">⭐</button>
+    <button id="btn-history" class="icon-btn">🕐</button>
+  </div>
+</div>
+
+<!-- 站点选择栏 -->
+<div id="site-bar">
+  <div id="site-tabs"></div>
+  <button id="btn-add-site" class="add-btn">+</button>
+</div>
+
+<!-- 分类栏 -->
+<div id="category-bar">
+  <div id="category-tabs"></div>
+</div>
+
+<!-- 主内容区 -->
+<div id="main">
+  <div id="loading" class="loading hide">加载中...</div>
+  <div id="video-list" class="video-grid"></div>
+  <div id="pagination"></div>
+</div>
+
+<!-- 搜索弹窗 -->
+<div id="search-modal" class="modal hide">
+  <div class="modal-content">
+    <div class="modal-header">
+      <input type="text" id="search-input" placeholder="搜索影片...">
+      <button id="btn-do-search" class="btn-primary">搜索</button>
+      <button id="btn-close-search" class="btn-close">✕</button>
+    </div>
+    <div id="search-results" class="video-grid"></div>
+  </div>
+</div>
+
+<!-- 站点管理弹窗 -->
+<div id="sites-modal" class="modal hide">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3>站点管理</h3>
+      <button id="btn-close-sites" class="btn-close">✕</button>
+    </div>
+    <div id="sites-list"></div>
+    <div class="add-site-form">
+      <input type="text" id="new-site-name" placeholder="站点名称">
+      <input type="text" id="new-site-url" placeholder="域名 (如: https://example.com)">
+      <button id="btn-save-site" class="btn-primary">添加站点</button>
+    </div>
+  </div>
+</div>
+
+<!-- 解析管理弹窗 -->
+<div id="parse-modal" class="modal hide">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3>解析线路</h3>
+      <button id="btn-close-parse" class="btn-close">✕</button>
+    </div>
+    <div id="parse-list"></div>
+    <div class="add-parse-form">
+      <input type="text" id="new-parse-name" placeholder="线路名称">
+      <input type="text" id="new-parse-url" placeholder="解析URL (用{url}代替播放地址)">
+      <button id="btn-save-parse" class="btn-primary">添加线路</button>
+    </div>
+  </div>
+</div>
+
+<!-- 详情弹窗 -->
+<div id="detail-modal" class="modal hide">
+  <div class="modal-content detail-content">
+    <div class="detail-header">
+      <button id="btn-close-detail" class="btn-close">✕</button>
+    </div>
+    <div id="detail-body"></div>
+  </div>
+</div>
+
+<!-- 播放页面 -->
+<div id="player-page" class="hide">
+  <div id="player-header">
+    <button id="btn-back" class="icon-btn">←</button>
+    <span id="player-title"></span>
+    <button id="btn-switch-parse" class="icon-btn">🔄</button>
+  </div>
+  <div id="player-container">
+    <iframe id="player-frame" src="" frameborder="0" allowfullscreen></iframe>
+  </div>
+  <div id="parse-switch-bar" class="hide">
+    <div id="parse-buttons"></div>
+  </div>
+</div>
+
+<!-- 收藏/历史页面 -->
+<div id="list-page" class="hide">
+  <div id="list-header">
+    <button id="btn-back-list" class="icon-btn">←</button>
+    <span id="list-title"></span>
+  </div>
+  <div id="list-content" class="video-grid"></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
