@@ -31,7 +31,11 @@ jobs:
         key: "${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}"
 
     - name: Grant execute permission
-      run: chmod +x gradlew
+      run: |
+        ls -la gradlew
+        chmod +x gradlew
+        ls -la gradlew
+        file gradlew
 
     - name: Build Debug APK
       run: ./gradlew assembleDebug
