@@ -22,6 +22,11 @@ jobs:
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
 
+    - name: Setup Gradle
+      uses: gradle/gradle-build-action@v2
+      with:
+        gradle-version: 8.5
+
     - name: Cache Gradle
       uses: actions/cache@v4
       with:
@@ -30,15 +35,8 @@ jobs:
           ~/.gradle/wrapper
         key: "${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}"
 
-    - name: Grant execute permission
-      run: |
-        ls -la gradlew
-        chmod +x gradlew
-        ls -la gradlew
-        file gradlew
-
     - name: Build Debug APK
-      run: ./gradlew assembleDebug
+      run: gradle assembleDebug
 
     - name: Upload Debug APK
       uses: actions/upload-artifact@v4
