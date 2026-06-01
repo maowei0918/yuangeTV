@@ -4,7 +4,7 @@
 
 // ==================== 配置 ====================
 const APP_VERSION = '1.0.0';
-const API_SUFFIX = '/api.php/provide/vod/';
+
 
 // 默认解析线路
 const DEFAULT_PARSES = [
@@ -57,7 +57,7 @@ function saveData() {
 
 // ==================== API 请求 ====================
 async function apiRequest(siteUrl, params = {}) {
-  const base = siteUrl.replace(/\/+$/, '') + API_SUFFIX;
+  const base = siteUrl.replace(/\/+$/, '');
   const query = new URLSearchParams(params).toString();
   const url = base + (query ? '?' + query : '');
   
