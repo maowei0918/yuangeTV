@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
     - name: Checkout
@@ -38,18 +40,38 @@ jobs:
     - name: Build Debug APK
       run: gradle assembleDebug
 
-    - name: Upload Debug APK
+    - name: Upload Debug APK artifact
       uses: actions/upload-artifact@v4
       with:
         name: tvbox-debug-apk
         path: app/build/outputs/apk/debug/app-debug.apk
+        retention-days: 30
 
-    - name: Upload APK to Release
-      uses: svenstaro/upload-release-action@v2
+    - name: Create or Update Release
+      uses: ncipollo/release-action@v1
       with:
-        repo_token: ${{ secrets.GITHUB_TOKEN }}
-        file: app/build/outputs/apk/debug/app-debug.apk
-        asset_name: tvbox-debug.apk
+        allowUpdates: true
         tag: v1.0.0
-        overwrite: true
-        body: "TVBox 视频盒子 - 自动编译"
+        name: TVBox 视频盒子 v1.0.0
+        artifacts: app/build/outputs/apk/debug/app-debug.apk
+        artifactContentType: application/vnd.android.package-archive
+        body: |
+          ## TVBox 视频盒子 v1.0.0
+          
+          ### 功能
+          - 添加多个 maccms10 资源站域名
+          - 域名状态自动检测
+          - 分类浏览（电影/电视剧/综艺/动漫）
+          - 视频列表 + 分页
+          - 视频详情 + 多播放源
+          - 支持 mp4/m3u8 直接播放
+          - 数据存在浏览器本地
+          
+          ### 安装
+          下载 APK 文件，在 Android 手机上安装即可。
+          
+          ### 使用
+          1. 打开应用
+          2. 点击右上角 ⚙️ 添加你的 maccms10 资源站域名
+          3. 自动检测通过后就能看了
+        token: ${{ secrets.GITHUB_TOKEN }}
