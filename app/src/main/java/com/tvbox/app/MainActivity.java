@@ -7,7 +7,6 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.Base64;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.WindowManager;
@@ -17,12 +16,10 @@ import android.widget.Toast;
 import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.util.concurrent.*;
 
 public class MainActivity extends Activity {
     private WebView webView;
     private long lastBackTime = 0;
-    private final ExecutorService httpExecutor = Executors.newFixedThreadPool(4);
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -53,7 +50,6 @@ public class MainActivity extends Activity {
 
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
 
-        // === 核心：拦截 fetch 请求 ===
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -70,19 +66,21 @@ public class MainActivity extends Activity {
                 return true;
             }
 
-            // 页面加载完成后，注入 fetch 拦截器
+            // 拦截所有 API 请求（包括 fetch）
             @Override
-            public void onPageFinished(WebView view, String url) {
-                super.onPageFinished(view, url);
-                injectFetchInterceptor();
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                String url = request.getUrl().toString();
+                if (url.contains("/api.php/")) {
+                    return interceptApi(url);
+                }
+                return super.shouldInterceptRequest(view, request);
             }
         });
 
-        // 控制台日志
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onConsoleMessage(ConsoleMessage msg) {
-                android.util.Log.d("TVBoxJS", msg.message() + " -- line " + msg.lineNumber());
+                android.util.Log.d("TVBoxJS", msg.message());
                 return true;
             }
 
@@ -107,124 +105,39 @@ public class MainActivity extends Activity {
             }
         });
 
-        webView.addJavascriptInterface(new JsBridge(), "Android");
         webView.loadUrl("file:///android_asset/index.html");
     }
 
-    /**
-     * 注入 JS 拦截器：覆盖原生 fetch，让 API 请求走 Bridge
-     */
-    private void injectFetchInterceptor() {
-        String js = "(function() {" +
-            "if (window._fetchPatched) return;" +
-            "window._fetchPatched = true;" +
-            "const _origFetch = window.fetch;" +
-            "window.fetch = function(input, opts) {" +
-            "  const url = typeof input === 'string' ? input : input.url;" +
-            "  console.log('fetch拦截: ' + url);" +
-            "  // 只拦截 API 请求" +
-            "  if (url && url.includes('/api.php/provide/vod/')) {" +
-            "    console.log('走Bridge: ' + url);" +
-            "    return new Promise(function(resolve, reject) {" +
-            "      const cbId = 'cb_' + Date.now() + '_' + Math.random().toString(36).substr(2,5);" +
-            "      window._httpCallbacks = window._httpCallbacks || {};" +
-            "      window._httpCallbacks[cbId] = function(result) {" +
-            "        delete window._httpCallbacks[cbId];" +
-            "        if (result.error) {" +
-            "          reject(new Error(result.error));" +
-            "        } else {" +
-            "          const text = atob(result.data);" +
-            "          console.log('Bridge响应前50: ' + text.substring(0,50));" +
-            "          resolve(new Response(text, {status: result.status, headers: {'Content-Type': 'application/json'}}));" +
-            "        }" +
-            "      };" +
-            "      setTimeout(function() {" +
-            "        if (window._httpCallbacks[cbId]) {" +
-            "          delete window._httpCallbacks[cbId];" +
-            "          reject(new Error('请求超时'));" +
-            "        }" +
-            "      }, 15000);" +
-            "      Android.httpGet(url, cbId);" +
-            "    });" +
-            "  }" +
-            // 非 API 请求走原始 fetch
-            "  return _origFetch.apply(this, arguments);" +
-            "};" +
-            "console.log('fetch拦截器已注入');" +
-            "})();";
-        webView.evaluateJavascript(js, null);
-    }
+    private WebResourceResponse interceptApi(String url) {
+        try {
+            HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(15000);
+            conn.setRequestProperty("Accept", "application/json, text/plain, */*");
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36");
 
-    public class JsBridge {
-        @JavascriptInterface
-        public void toast(String msg) {
-            mainHandler.post(() -> Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show());
-        }
+            int code = conn.getResponseCode();
+            InputStream is = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            byte[] buf = new byte[4096];
+            int len;
+            while ((len = is.read(buf)) != -1) baos.write(buf, 0, len);
+            is.close();
+            conn.disconnect();
 
-        @JavascriptInterface
-        public void openPlayer(String url) {
-            mainHandler.post(() -> {
-                try { startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(url), "video/*")); }
-                catch (Exception e) { Toast.makeText(MainActivity.this, "未找到视频播放器", Toast.LENGTH_SHORT).show(); }
-            });
-        }
+            byte[] bytes = baos.toByteArray();
+            String raw = new String(bytes, "UTF-8");
+            android.util.Log.d("TVBox", "拦截: " + url + " -> " + code + ", 前80: " + raw.substring(0, Math.min(80, raw.length())));
 
-        /**
-         * JS 调用此方法发起 HTTP 请求，结果通过 evaluateJavascript 回调
-         */
-        @JavascriptInterface
-        public void httpGet(final String url, final String callbackId) {
-            httpExecutor.execute(() -> {
-                String b64Data = null;
-                String errorMsg = null;
-                int httpCode = 0;
-
-                try {
-                    HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
-                    conn.setRequestMethod("GET");
-                    conn.setConnectTimeout(15000);
-                    conn.setReadTimeout(15000);
-                    conn.setRequestProperty("Accept", "application/json, text/plain, */*");
-                    conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36");
-
-                    httpCode = conn.getResponseCode();
-                    InputStream is = (httpCode >= 200 && httpCode < 300) ? conn.getInputStream() : conn.getErrorStream();
-                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                    byte[] buf = new byte[4096];
-                    int len;
-                    while ((len = is.read(buf)) != -1) baos.write(buf, 0, len);
-                    is.close();
-                    conn.disconnect();
-
-                    String raw = new String(baos.toByteArray(), "UTF-8");
-                    android.util.Log.d("TVBox", "HTTP " + httpCode + " [" + url + "] 前100: " + raw.substring(0, Math.min(100, raw.length())));
-                    b64Data = Base64.encodeToString(raw.getBytes("UTF-8"), Base64.NO_WRAP);
-
-                } catch (Exception e) {
-                    errorMsg = e.getMessage();
-                    if (errorMsg == null) errorMsg = "Unknown";
-                    android.util.Log.e("TVBox", "HTTP 失败: " + errorMsg);
-                }
-
-                // 回调到 JS
-                final String data = b64Data;
-                final String err = errorMsg;
-                final int code = httpCode;
-
-                mainHandler.post(() -> {
-                    StringBuilder js = new StringBuilder();
-                    js.append("if(window._httpCallbacks['").append(callbackId).append("']){");
-                    if (err != null) {
-                        js.append("window._httpCallbacks['").append(callbackId).append("'](")
-                          .append("{error:'").append(err.replace("'","\\'")).append("',status:").append(code).append("});");
-                    } else {
-                        js.append("window._httpCallbacks['").append(callbackId).append("'](")
-                          .append("{data:'").append(data).append("',status:").append(code).append("});");
-                    }
-                    js.append("delete window._httpCallbacks['").append(callbackId).append("'];}");
-                    webView.evaluateJavascript(js.toString(), null);
-                });
-            });
+            return new WebResourceResponse("application/json", "UTF-8", code,
+                code >= 200 && code < 300 ? "OK" : "Error", null, new ByteArrayInputStream(bytes));
+        } catch (Exception e) {
+            android.util.Log.e("TVBox", "拦截失败: " + e.getMessage());
+            try {
+                String err = "{\"code\":0,\"msg\":\"" + e.getMessage() + "\"}";
+                return new WebResourceResponse("application/json", "UTF-8", 500, "Error", null, new ByteArrayInputStream(err.getBytes("UTF-8")));
+            } catch (Exception ex) { return null; }
         }
     }
 
@@ -246,6 +159,5 @@ public class MainActivity extends Activity {
 
     @Override protected void onPause() { super.onPause(); webView.onPause(); }
     @Override protected void onResume() { super.onResume(); webView.onResume(); }
-    @Override protected void onDestroy() { super.onDestroy(); httpExecutor.shutdown(); webView.destroy(); }
+    @Override protected void onDestroy() { super.onDestroy(); webView.destroy(); }
 }
-// Tue Jun  2 13:32:22 CST 2026
