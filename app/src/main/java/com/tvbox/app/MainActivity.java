@@ -7,6 +7,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.WindowManager;
@@ -16,11 +17,13 @@ import android.widget.Toast;
 import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.concurrent.*;
 
 public class MainActivity extends Activity {
     private WebView webView;
     private long lastBackTime = 0;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final ExecutorService pool = Executors.newFixedThreadPool(4);
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -50,6 +53,7 @@ public class MainActivity extends Activity {
 
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
 
+        // === WebViewClient：拦截所有 API 请求 ===
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -66,21 +70,24 @@ public class MainActivity extends Activity {
                 return true;
             }
 
-            // 拦截所有 API 请求（包括 fetch）
+            // 拦截 API 请求（包括 fetch、XHR）
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
+                Log.d("TVBox", "shouldInterceptRequest: " + url);
                 if (url.contains("/api.php/")) {
-                    return interceptApi(url);
+                    Log.d("TVBox", "拦截到 API 请求: " + url);
+                    return doHttpRequest(url);
                 }
                 return super.shouldInterceptRequest(view, request);
             }
         });
 
+        // === WebChromeClient ===
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onConsoleMessage(ConsoleMessage msg) {
-                android.util.Log.d("TVBoxJS", msg.message());
+                Log.d("TVBoxJS", msg.message());
                 return true;
             }
 
@@ -105,10 +112,14 @@ public class MainActivity extends Activity {
             }
         });
 
+        // 加载本地页面
         webView.loadUrl("file:///android_asset/index.html");
     }
 
-    private WebResourceResponse interceptApi(String url) {
+    /**
+     * 在后台线程发起 HTTP 请求，返回 WebResourceResponse
+     */
+    private WebResourceResponse doHttpRequest(String url) {
         try {
             HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
             conn.setRequestMethod("GET");
@@ -119,6 +130,7 @@ public class MainActivity extends Activity {
 
             int code = conn.getResponseCode();
             InputStream is = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
+
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             byte[] buf = new byte[4096];
             int len;
@@ -128,12 +140,14 @@ public class MainActivity extends Activity {
 
             byte[] bytes = baos.toByteArray();
             String raw = new String(bytes, "UTF-8");
-            android.util.Log.d("TVBox", "拦截: " + url + " -> " + code + ", 前80: " + raw.substring(0, Math.min(80, raw.length())));
+            Log.d("TVBox", "API " + code + " 前100: " + raw.substring(0, Math.min(100, raw.length())));
 
+            // 强制返回 application/json
             return new WebResourceResponse("application/json", "UTF-8", code,
                 code >= 200 && code < 300 ? "OK" : "Error", null, new ByteArrayInputStream(bytes));
+
         } catch (Exception e) {
-            android.util.Log.e("TVBox", "拦截失败: " + e.getMessage());
+            Log.e("TVBox", "API 请求失败: " + e.getMessage());
             try {
                 String err = "{\"code\":0,\"msg\":\"" + e.getMessage() + "\"}";
                 return new WebResourceResponse("application/json", "UTF-8", 500, "Error", null, new ByteArrayInputStream(err.getBytes("UTF-8")));
@@ -159,5 +173,5 @@ public class MainActivity extends Activity {
 
     @Override protected void onPause() { super.onPause(); webView.onPause(); }
     @Override protected void onResume() { super.onResume(); webView.onResume(); }
-    @Override protected void onDestroy() { super.onDestroy(); webView.destroy(); }
+    @Override protected void onDestroy() { super.onDestroy(); pool.shutdown(); webView.destroy(); }
 }

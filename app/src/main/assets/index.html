@@ -315,21 +315,31 @@ async function testDomain(i) {
   el.className = 'status loading';
   el.textContent = '检测中...';
   try {
-    const resp = await fetch(getApiUrl(d, 'type/get_list'), { signal: AbortSignal.timeout(8000) });
-    const data = await resp.json();
+    const apiUrl = getApiUrl(d, 'type/get_list');
+    const resp = await fetch(apiUrl, { signal: AbortSignal.timeout(8000) });
+    const text = await resp.text();
+    let data;
+    try { data = JSON.parse(text); } catch(e2) {
+      d.status = 'err';
+      el.className = 'status err';
+      el.textContent = '非JSON响应';
+      console.error('非JSON:', text.substring(0, 200));
+      return;
+    }
     if (data.code === 1) {
       d.status = 'ok';
       el.className = 'status ok';
-      el.textContent = '✓ 正常';
+      el.textContent = '正常';
     } else {
       d.status = 'err';
       el.className = 'status err';
-      el.textContent = '✗ 失败';
+      el.textContent = 'code=' + data.code;
     }
   } catch (e) {
     d.status = 'err';
     el.className = 'status err';
-    el.textContent = '✗ 失败';
+    el.textContent = e.message.substring(0, 30);
+    console.error('testDomain失败:', e);
   }
 }
 
