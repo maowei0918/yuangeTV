@@ -225,6 +225,48 @@ img{display:block;max-width:100%}
 <div class="toast" id="toast"></div>
 
 <script>
+// ===== fetch 拦截器（Android WebView 绕过 CORS） =====
+(function() {
+  if (window._fetchPatched) return;
+  window._fetchPatched = true;
+  window._httpCallbacks = window._httpCallbacks || {};
+  const _origFetch = window.fetch;
+  window.fetch = function(input, opts) {
+    const url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+    // 只拦截 maccms API 请求
+    if (url && url.includes('/api.php/') && typeof Android !== 'undefined' && Android && Android.httpGet) {
+      return new Promise(function(resolve, reject) {
+        const cbId = 'cb_' + Date.now() + '_' + Math.random().toString(36).substr(2,5);
+        window._httpCallbacks[cbId] = function(result) {
+          delete window._httpCallbacks[cbId];
+          if (result.error) {
+            reject(new Error(result.error));
+          } else {
+            try {
+              const text = atob(result.data);
+              resolve(new Response(text, {status: result.status, headers: {'Content-Type': 'application/json'}}));
+            } catch(e) {
+              reject(new Error('Base64解码失败: ' + e.message));
+            }
+          }
+        };
+        setTimeout(function() {
+          if (window._httpCallbacks[cbId]) {
+            delete window._httpCallbacks[cbId];
+            reject(new Error('请求超时'));
+          }
+        }, 15000);
+        try {
+          Android.httpGet(url, cbId);
+        } catch(e) {
+          reject(new Error('Bridge调用失败: ' + e.message));
+        }
+      });
+    }
+    return _origFetch.apply(this, arguments);
+  };
+})();
+
 // ===== 数据存储 =====
 const STORAGE_KEY = 'tvbox_domains';
 let domains = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
