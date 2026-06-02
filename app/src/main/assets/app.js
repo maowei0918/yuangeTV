@@ -67,17 +67,18 @@ window._httpCallbacks = {};
 function httpGetViaBridge(url) {
   return new Promise((resolve, reject) => {
     const callbackId = 'cb_' + (++_httpCallbackId);
-    window._httpCallbacks[callbackId] = (resultStr) => {
-      delete window._httpCallbacks[callbackId];
-      try {
-        const result = JSON.parse(resultStr);
-        if (result.error) {
-          reject(new Error(result.error));
-        } else {
-          resolve(result.data);
+    window._httpCallbacks[callbackId] = (result) => {
+      // result.data 是 Base64 编码的字符串
+      if (result.error) {
+        reject(new Error(result.error));
+      } else {
+        try {
+          // Base64 解码
+          const decoded = atob(result.data);
+          resolve(decoded);
+        } catch (e) {
+          reject(new Error('Base64 解码失败'));
         }
-      } catch (e) {
-        reject(new Error('解析响应失败'));
       }
     };
     // 超时处理

@@ -13,6 +13,7 @@ import android.view.WindowManager;
 import android.webkit.*;
 import android.widget.Toast;
 
+import android.util.Base64;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
@@ -157,14 +158,14 @@ public class MainActivity extends Activity {
         /**
          * 通过 Java 发起 HTTP GET 请求，绕过 CORS 限制
          * JS 调用: Android.httpGet(url, callbackId)
-         * 结果通过 WebView.evaluateJavascript 回调到 JS
+         * 结果通过 Base64 编码后回调到 JS，避免转义问题
          */
         @android.webkit.JavascriptInterface
         public void httpGet(final String url, final String callbackId) {
             executor.execute(() -> {
-                StringBuilder result = new StringBuilder();
-                String error = null;
-                int statusCode = 0;
+                final String response;
+                final String error;
+                final int statusCode;
 
                 try {
                     URL requestUrl = new URL(url);
@@ -184,45 +185,35 @@ public class MainActivity extends Activity {
                         reader = new BufferedReader(new InputStreamReader(conn.getErrorStream(), "UTF-8"));
                     }
 
+                    StringBuilder sb = new StringBuilder();
                     String line;
                     while ((line = reader.readLine()) != null) {
-                        result.append(line);
+                        sb.append(line).append("\n");
                     }
                     reader.close();
                     conn.disconnect();
 
+                    // Base64 编码响应内容
+                    response = Base64.encodeToString(sb.toString().getBytes("UTF-8"), Base64.NO_WRAP);
+                    error = null;
+
                 } catch (Exception e) {
-                    error = e.getMessage();
+                    response = null;
+                    error = e.getMessage() != null ? e.getMessage() : "Unknown error";
+                    statusCode = 0;
                 }
 
-                // 回调到 JS
-                final String response = result.toString();
-                final String err = error;
-                final int code = statusCode;
-
+                // 回调到 JS（Base64 编码，无需转义）
                 mainHandler.post(() -> {
                     String js;
-                    if (err != null) {
-                        js = "window._httpCallbacks && window._httpCallbacks['" + callbackId + "'] && window._httpCallbacks['" + callbackId + "'](" +
-                             "JSON.stringify({error: '" + escapeJs(err) + "', status: " + code + "})" +
-                             ")";
+                    if (error != null) {
+                        js = "if(window._httpCallbacks['" + callbackId + "']){window._httpCallbacks['" + callbackId + "']({error:'" + error.replace("'", "\\'") + "',status:" + statusCode + "});delete window._httpCallbacks['" + callbackId + "'];}";
                     } else {
-                        js = "window._httpCallbacks && window._httpCallbacks['" + callbackId + "'] && window._httpCallbacks['" + callbackId + "'](" +
-                             "JSON.stringify({data: '" + escapeJs(response) + "', status: " + code + "})" +
-                             ")";
+                        js = "if(window._httpCallbacks['" + callbackId + "']){window._httpCallbacks['" + callbackId + "']({data:'" + response + "',status:" + statusCode + "});delete window._httpCallbacks['" + callbackId + "'];}";
                     }
                     webView.evaluateJavascript(js, null);
                 });
             });
-        }
-
-        private String escapeJs(String str) {
-            if (str == null) return "";
-            return str.replace("\\", "\\\\")
-                      .replace("'", "\\'")
-                      .replace("\"", "\\\"")
-                      .replace("\n", "\\n")
-                      .replace("\r", "\\r");
         }
     }
 
