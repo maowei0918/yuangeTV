@@ -64,6 +64,10 @@ img{display:block;max-width:100%}
 .nav-item:hover{color:var(--text)}
 .nav-item.active{background:var(--primary);color:#fff;border-color:var(--primary)}
 .nav-item .domain-tag{font-size:10px;opacity:.7;margin-left:4px}
+.sub-types{display:flex;flex-wrap:wrap;gap:4px;padding:4px 0 4px 16px}
+.sub-type{font-size:11px!important;padding:4px 10px!important;background:var(--card2)!important}
+.sub-type.active{background:var(--primary)!important}
+.parent-type{font-weight:600}
 
 /* ===== 视频网格 ===== */
 .section-title{padding:16px 16px 8px;font-size:16px;font-weight:700;display:flex;align-items:center;justify-content:space-between}
@@ -442,10 +446,26 @@ async function loadNav() {
   }
   allTypes = types;
 
-  const el = document.getElementById('navScroll');
-  let html = `<div class="nav-item ${currentTypeId === 0 ? 'active' : ''}" onclick="selectType(0)">全部</div>`;
-  types.forEach(t => {
-    html += `<div class="nav-item ${currentTypeId === t.type_id ? 'active' : ''}" onclick="selectType(${t.type_id})">${escapeHtml(t.type_name)}</div>`;
+  // 分离1级和2级分类
+  var parents = types.filter(t => !t.type_pid || t.type_pid === 0);
+  var children = types.filter(t => t.type_pid && t.type_pid !== 0);
+  // 按 type_sort 排序
+  parents.sort(function(a,b){return (a.type_sort||0)-(b.type_sort||0)});
+  children.sort(function(a,b){return (a.type_sort||0)-(b.type_sort||0)});
+
+  var el = document.getElementById('navScroll');
+  var html = '<div class="nav-item ' + (currentTypeId === 0 ? 'active' : '') + '" onclick="selectType(0)">全部</div>';
+  parents.forEach(function(p) {
+    html += '<div class="nav-item parent-type ' + (currentTypeId === p.type_id ? 'active' : '') + '" onclick="selectType(' + p.type_id + ')">' + escapeHtml(p.type_name) + '</div>';
+    // 显示该1级分类下的2级分类
+    var subs = children.filter(function(c){return c.type_pid === p.type_id;});
+    if (subs.length > 0) {
+      html += '<div class="sub-types" id="sub-' + p.type_id + '" style="display:none">';
+      subs.forEach(function(s) {
+        html += '<div class="nav-item sub-type ' + (currentTypeId === s.type_id ? 'active' : '') + '" onclick="selectType(' + s.type_id + ')">' + escapeHtml(s.type_name) + '</div>';
+      });
+      html += '</div>';
+    }
   });
   el.innerHTML = html;
 }
@@ -468,8 +488,20 @@ function selectType(typeId) {
   currentTypeId = typeId;
   currentPage = 1;
   // 更新导航高亮
-  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  event.target.classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(function(el){el.classList.remove('active')});
+  if (event && event.target) event.target.classList.add('active');
+  // 点击1级分类时展开/收起2级分类
+  var allParents = allTypes.filter(function(t){return !t.type_pid || t.type_pid === 0;});
+  allParents.forEach(function(p) {
+    var subEl = document.getElementById('sub-' + p.type_id);
+    if (subEl) {
+      if (p.type_id === typeId) {
+        subEl.style.display = subEl.style.display === 'none' ? 'block' : 'none';
+      } else {
+        subEl.style.display = 'none';
+      }
+    }
+  });
   loadVideos();
 }
 
@@ -521,12 +553,13 @@ async function loadVideos() {
 }
 
 async function fetchVideosFromDomain(domain, typeId, page, limit) {
-  let url = getApiUrl(domain, 'vod/get_list?offset=' + ((page - 1) * limit) + '&limit=' + limit + '&orderby=time');
-  if (typeId > 0) url += '&type_id=' + typeId;
+  // 注意：dyttzyw.tv 用 t 参数传分类，不是 type_id
+  var url = getApiUrl(domain, 'vod/get_list?offset=' + ((page - 1) * limit) + '&limit=' + limit + '&orderby=time');
+  if (typeId > 0) url += '&t=' + typeId;
   var resp = await httpGet(url, 10000);
   var data = await resp.json();
   if (data.code === 1) {
-    var list = (data.list || data.info && data.info.rows || []).map(v => ({ ...v, _domain: domain }));
+    var list = (data.list || (data.info && data.info.rows) || []).map(v => ({ ...v, _domain: domain }));
     var total = data.total || (data.info && data.info.total) || 0;
     return { list: list, total: total };
   }
@@ -688,22 +721,27 @@ function playVideo(url, epName, vodName) {
   const isVideo = /\.(mp4|m3u8|flv|avi|mkv|mov|webm)(\?|$)/i.test(url);
   const isM3U8 = /\.m3u8(\?|$)/i.test(url);
 
-  if (isVideo || isM3U8) {
-    // 直接用系统播放器播放
-    container.innerHTML = `
-      <div class="unsupported">
-        <div class="icon">📺</div>
-        <p>正在调用播放器...</p>
-        <p style="word-break:break-all;font-size:11px;color:var(--text3);max-width:80%;margin-top:8px">${escapeHtml(url)}</p>
-      </div>
-    `;
-    // 调用系统播放器
-    if (typeof NativeHttp !== 'undefined' && NativeHttp && NativeHttp.openVideo) {
-      NativeHttp.openVideo(url, vodName + ' ' + epName);
+  if (isM3U8) {
+    // m3u8 用 HLS.js 在 WebView 内播放
+    container.innerHTML = '<video id="videoPlayer" controls autoplay playsinline style="width:100%;height:100%;background:#000"></video>';
+    var video = document.getElementById('videoPlayer');
+    if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+      var hls = new Hls();
+      hls.loadSource(url);
+      hls.attachMedia(video);
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      // Safari/iOS 原生支持
+      video.src = url;
     } else {
-      // 降级：用 Intent 打开
-      window.location.href = 'intent:' + url + '#Intent;type=video/*;end';
+      // 降级：调用系统播放器
+      container.innerHTML = '<div class="unsupported"><div class="icon">📺</div><p>HLS.js 加载失败，调用系统播放器...</p></div>';
+      if (typeof NativeHttp !== 'undefined' && NativeHttp && NativeHttp.openVideo) {
+        NativeHttp.openVideo(url, vodName + ' ' + epName);
+      }
     }
+  } else if (isVideo) {
+    // mp4 等直接播放
+    container.innerHTML = '<video id="videoPlayer" src="' + escapeHtml(url) + '" controls autoplay playsinline style="width:100%;height:100%;background:#000"></video>';
   } else {
     // 无法直接播放，尝试解析
     container.innerHTML = `
@@ -721,33 +759,25 @@ function playVideo(url, epName, vodName) {
 // 依次尝试解析接口
 function tryParse(url, vodName, epName, container, index) {
   if (index >= PARSE_URLS.length) {
-    // 所有解析接口都失败了，直接显示链接
-    container.innerHTML = `
-      <div class="unsupported">
-        <div class="icon">🔗</div>
-        <p>解析失败，请复制地址到播放器打开</p>
-        <p style="word-break:break-all;font-size:11px;color:var(--text3);max-width:80%">${escapeHtml(url)}</p>
-      </div>
-    `;
+    // 所有解析接口都失败了，直接用系统播放器打开原始地址
+    container.innerHTML = '<div class="unsupported"><div class="icon">📺</div><p>解析失败，尝试直接播放...</p></div>';
+    if (typeof NativeHttp !== 'undefined' && NativeHttp && NativeHttp.openVideo) {
+      NativeHttp.openVideo(url, vodName + ' ' + epName);
+    }
     return;
   }
   var parseUrl = PARSE_URLS[index] + encodeURIComponent(url);
   console.log('尝试解析 ' + index + ': ' + parseUrl);
-  httpGet(parseUrl, 10000).then(function(resp) {
+  httpGet(parseUrl, 15000).then(function(resp) {
     return resp.text();
   }).then(function(text) {
     // 检查解析结果中是否包含视频地址
-    var videoMatch = text.match(/(https?:\/\/[^"'\s]+\.(mp4|m3u8|flv)[^"'\s]*)/i);
+    var videoMatch = text.match(/(https?:\/\/[^"'\s<>]+\.(mp4|m3u8|flv|avi|mkv|mov|webm)[^"'\s<>]*)/i);
     if (videoMatch) {
-      // 找到视频地址，用系统播放器播放
-      var videoUrl = videoMatch[1];
+      var videoUrl = videoMatch[1].replace(/&amp;/g, '&');
       console.log('解析成功: ' + videoUrl);
       container.innerHTML = '<div class="unsupported"><div class="icon">📺</div><p>解析成功，正在播放...</p></div>';
-      if (typeof NativeHttp !== 'undefined' && NativeHttp && NativeHttp.openVideo) {
-        NativeHttp.openVideo(videoUrl, vodName + ' ' + epName);
-      } else {
-        window.location.href = 'intent:' + videoUrl + '#Intent;type=video/*;end';
-      }
+      playVideo(videoUrl, epName, vodName);
     } else {
       // 没找到，试下一个
       tryParse(url, vodName, epName, container, index + 1);
