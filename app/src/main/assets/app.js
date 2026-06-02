@@ -56,11 +56,58 @@ function saveData() {
 }
 
 // ==================== API 请求 ====================
+// 回调 ID 计数器
+let _httpCallbackId = 0;
+// 回调映射表
+window._httpCallbacks = {};
+
+/**
+ * 通过 Android JS Bridge 发起 HTTP GET 请求（绕过 CORS）
+ */
+function httpGetViaBridge(url) {
+  return new Promise((resolve, reject) => {
+    const callbackId = 'cb_' + (++_httpCallbackId);
+    window._httpCallbacks[callbackId] = (resultStr) => {
+      delete window._httpCallbacks[callbackId];
+      try {
+        const result = JSON.parse(resultStr);
+        if (result.error) {
+          reject(new Error(result.error));
+        } else {
+          resolve(result.data);
+        }
+      } catch (e) {
+        reject(new Error('解析响应失败'));
+      }
+    };
+    // 超时处理
+    setTimeout(() => {
+      if (window._httpCallbacks[callbackId]) {
+        delete window._httpCallbacks[callbackId];
+        reject(new Error('请求超时'));
+      }
+    }, 20000);
+    Android.httpGet(url, callbackId);
+  });
+}
+
 async function apiRequest(siteUrl, params = {}) {
   const base = siteUrl.replace(/\/+$/, '') + API_SUFFIX;
   const query = new URLSearchParams(params).toString();
   const url = base + (query ? '?' + query : '');
-  
+
+  // 优先用 JS Bridge（Android WebView 中绕过 CORS）
+  if (typeof Android !== 'undefined' && Android.httpGet) {
+    try {
+      const raw = await httpGetViaBridge(url);
+      const data = JSON.parse(raw);
+      return data;
+    } catch (err) {
+      throw new Error('请求失败: ' + err.message);
+    }
+  }
+
+  // 浏览器环境：直接 fetch
   try {
     const res = await fetch(url, {
       headers: { 'Accept': 'application/json' },

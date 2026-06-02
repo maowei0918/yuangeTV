@@ -5,23 +5,32 @@ import android.app.Activity;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.WindowManager;
 import android.webkit.*;
 import android.widget.Toast;
-import androidx.webkit.WebSettingsCompat;
-import androidx.webkit.WebViewFeature;
+
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
     private WebView webView;
     private long lastBackTime = 0;
+    private final ExecutorService executor = Executors.newFixedThreadPool(4);
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        
+
         // 全屏沉浸式
         getWindow().setFlags(
             WindowManager.LayoutParams.FLAG_FULLSCREEN,
@@ -89,11 +98,6 @@ public class MainActivity extends Activity {
                 }
                 return true;
             }
-
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                super.onPageFinished(view, url);
-            }
         });
 
         // WebChromeClient - 支持全屏
@@ -121,14 +125,9 @@ public class MainActivity extends Activity {
                 customViewCallback.onCustomViewHidden();
                 customView = null;
             }
-
-            @Override
-            public void onProgressChanged(WebView view, int newProgress) {
-                // 可以在这里更新加载进度
-            }
         });
 
-        // JS Bridge
+        // JS Bridge - 包含 HTTP 请求代理
         webView.addJavascriptInterface(new JsBridge(), "Android");
 
         // 加载本地页面
@@ -139,31 +138,101 @@ public class MainActivity extends Activity {
     public class JsBridge {
         @android.webkit.JavascriptInterface
         public void toast(String msg) {
-            Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show();
+            mainHandler.post(() -> Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show());
         }
 
         @android.webkit.JavascriptInterface
         public void openPlayer(String url) {
-            Intent intent = new Intent(Intent.ACTION_VIEW);
-            intent.setDataAndType(Uri.parse(url), "video/*");
-            try {
-                startActivity(intent);
-            } catch (Exception e) {
-                Toast.makeText(MainActivity.this, "未找到视频播放器", Toast.LENGTH_SHORT).show();
-            }
+            mainHandler.post(() -> {
+                Intent intent = new Intent(Intent.ACTION_VIEW);
+                intent.setDataAndType(Uri.parse(url), "video/*");
+                try {
+                    startActivity(intent);
+                } catch (Exception e) {
+                    Toast.makeText(MainActivity.this, "未找到视频播放器", Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
+
+        /**
+         * 通过 Java 发起 HTTP GET 请求，绕过 CORS 限制
+         * JS 调用: Android.httpGet(url, callbackId)
+         * 结果通过 WebView.evaluateJavascript 回调到 JS
+         */
+        @android.webkit.JavascriptInterface
+        public void httpGet(final String url, final String callbackId) {
+            executor.execute(() -> {
+                StringBuilder result = new StringBuilder();
+                String error = null;
+                int statusCode = 0;
+
+                try {
+                    URL requestUrl = new URL(url);
+                    HttpURLConnection conn = (HttpURLConnection) requestUrl.openConnection();
+                    conn.setRequestMethod("GET");
+                    conn.setConnectTimeout(15000);
+                    conn.setReadTimeout(15000);
+                    conn.setRequestProperty("Accept", "application/json, text/plain, */*");
+                    conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36");
+
+                    statusCode = conn.getResponseCode();
+
+                    BufferedReader reader;
+                    if (statusCode >= 200 && statusCode < 300) {
+                        reader = new BufferedReader(new InputStreamReader(conn.getInputStream(), "UTF-8"));
+                    } else {
+                        reader = new BufferedReader(new InputStreamReader(conn.getErrorStream(), "UTF-8"));
+                    }
+
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        result.append(line);
+                    }
+                    reader.close();
+                    conn.disconnect();
+
+                } catch (Exception e) {
+                    error = e.getMessage();
+                }
+
+                // 回调到 JS
+                final String response = result.toString();
+                final String err = error;
+                final int code = statusCode;
+
+                mainHandler.post(() -> {
+                    String js;
+                    if (err != null) {
+                        js = "window._httpCallbacks && window._httpCallbacks['" + callbackId + "'] && window._httpCallbacks['" + callbackId + "'](" +
+                             "JSON.stringify({error: '" + escapeJs(err) + "', status: " + code + "})" +
+                             ")";
+                    } else {
+                        js = "window._httpCallbacks && window._httpCallbacks['" + callbackId + "'] && window._httpCallbacks['" + callbackId + "'](" +
+                             "JSON.stringify({data: '" + escapeJs(response) + "', status: " + code + "})" +
+                             ")";
+                    }
+                    webView.evaluateJavascript(js, null);
+                });
+            });
+        }
+
+        private String escapeJs(String str) {
+            if (str == null) return "";
+            return str.replace("\\", "\\\\")
+                      .replace("'", "\\'")
+                      .replace("\"", "\\\"")
+                      .replace("\n", "\\n")
+                      .replace("\r", "\\r");
         }
     }
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
-            // 如果 WebView 在全屏视频模式，先退出全屏
-            // 如果 WebView 可以后退，先后退
             if (webView.canGoBack()) {
                 webView.goBack();
                 return true;
             }
-            // 双击退出
             long now = System.currentTimeMillis();
             if (now - lastBackTime < 2000) {
                 finish();
@@ -191,6 +260,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        executor.shutdown();
         webView.destroy();
     }
 }
