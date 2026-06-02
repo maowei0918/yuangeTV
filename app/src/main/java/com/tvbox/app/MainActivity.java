@@ -25,16 +25,13 @@ public class MainActivity extends Activity {
     private long lastBackTime = 0;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService pool = Executors.newFixedThreadPool(4);
-
-    // 侧滑返回相关
     private float startX = 0;
-    private static final float SWIPE_THRESHOLD = 100; // 侧滑阈值
+    private static final float SWIPE_THRESHOLD = 80;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
         getWindow().getDecorView().setSystemUiVisibility(
             View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
@@ -55,48 +52,36 @@ public class MainActivity extends Activity {
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         s.setMediaPlaybackRequiresUserGesture(false);
         s.setCacheMode(WebSettings.LOAD_NO_CACHE);
-
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
 
-        // === WebViewClient ===
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
+                if (url.startsWith("intent:")) return true;
                 if (url.endsWith(".m3u8") || url.endsWith(".mp4") || url.endsWith(".flv")) {
-                    try { startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(url), "video/*")); }
-                    catch (Exception e) { toast("未找到视频播放器"); }
+                    openVideo(url, "");
                     return true;
                 }
-                if (!url.startsWith("http")) return false;
-                if (url.contains("jiexi") || url.contains("jx.") || url.contains("parse")) return false;
-                try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); }
-                catch (Exception e) { view.loadUrl(url); }
-                return true;
+                return false;
             }
 
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
-                if (url.contains("/api.php/")) {
-                    Log.d("TVBox", "拦截 API: " + url);
-                    return doHttpRequest(url);
-                }
+                if (url.contains("/api.php/")) return doHttpRequest(url);
                 return super.shouldInterceptRequest(view, request);
             }
         });
 
-        // === WebChromeClient ===
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onConsoleMessage(ConsoleMessage msg) {
                 Log.d("TVBoxJS", msg.message());
                 return true;
             }
-
             private View customView;
             private CustomViewCallback customViewCallback;
-
             @Override
             public void onShowCustomView(View view, CustomViewCallback callback) {
                 if (customView != null) { callback.onCustomViewHidden(); return; }
@@ -104,7 +89,6 @@ public class MainActivity extends Activity {
                 getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                 setContentView(view);
             }
-
             @Override
             public void onHideCustomView() {
                 if (customView == null) return;
@@ -115,13 +99,11 @@ public class MainActivity extends Activity {
             }
         });
 
-        // === Bridge：JS 调用 Java ===
+        // Bridge
         webView.addJavascriptInterface(new Object() {
             @JavascriptInterface
             public void httpGet(final String url, final String callbackId) {
-                Log.d("TVBox", "Bridge.httpGet: " + url);
                 pool.execute(new Runnable() {
-                    @Override
                     public void run() {
                         try {
                             HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
@@ -129,58 +111,36 @@ public class MainActivity extends Activity {
                             conn.setConnectTimeout(15000);
                             conn.setReadTimeout(15000);
                             conn.setRequestProperty("Accept", "application/json, text/plain, */*");
-                            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36");
-
+                            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
                             int code = conn.getResponseCode();
                             InputStream is = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
                             ByteArrayOutputStream baos = new ByteArrayOutputStream();
                             byte[] buf = new byte[4096];
                             int len;
                             while ((len = is.read(buf)) != -1) baos.write(buf, 0, len);
-                            is.close();
-                            conn.disconnect();
-
+                            is.close(); conn.disconnect();
                             String raw = new String(baos.toByteArray(), "UTF-8");
-                            Log.d("TVBox", "Bridge 响应 " + code + " 前80: " + raw.substring(0, Math.min(80, raw.length())));
-
-                            String escaped = raw.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r");
-                            final String js = "if(window._httpCallbacks['" + callbackId + "']){window._httpCallbacks['" + callbackId + "']('" + escaped + "');delete window._httpCallbacks['" + callbackId + "'];}";
-                            mainHandler.post(new Runnable() {
-                                @Override
-                                public void run() {
-                                    webView.evaluateJavascript(js, null);
-                                }
-                            });
+                            String escaped = raw.replace("\\","\\\\").replace("'","\\'").replace("\n","\\n").replace("\r","\\r");
+                            final String js = "if(window._httpCallbacks['"+callbackId+"']){window._httpCallbacks['"+callbackId+"']('"+escaped+"');delete window._httpCallbacks['"+callbackId+"'];}";
+                            mainHandler.post(new Runnable() { public void run() { webView.evaluateJavascript(js, null); } });
                         } catch (final Exception e) {
-                            Log.e("TVBox", "Bridge 失败: " + e.getMessage());
-                            final String js = "if(window._httpCallbacks['" + callbackId + "']){window._httpCallbacks['" + callbackId + "']('ERROR:" + e.getMessage().replace("'", "\\'") + "');delete window._httpCallbacks['" + callbackId + "'];}";
-                            mainHandler.post(new Runnable() {
-                                @Override
-                                public void run() {
-                                    webView.evaluateJavascript(js, null);
-                                }
-                            });
+                            final String js = "if(window._httpCallbacks['"+callbackId+"']){window._httpCallbacks['"+callbackId+"']('ERROR:"+e.getMessage().replace("'","\\'")+"');delete window._httpCallbacks['"+callbackId+"'];}";
+                            mainHandler.post(new Runnable() { public void run() { webView.evaluateJavascript(js, null); } });
                         }
                     }
                 });
             }
 
-            // 调用系统播放器播放视频
             @JavascriptInterface
             public void openVideo(final String url, final String title) {
-                Log.d("TVBox", "openVideo: " + url);
                 mainHandler.post(new Runnable() {
-                    @Override
                     public void run() {
                         try {
                             Intent intent = new Intent(Intent.ACTION_VIEW);
                             intent.setDataAndType(Uri.parse(url), "video/*");
                             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                             startActivity(intent);
-                        } catch (Exception e) {
-                            Log.e("TVBox", "openVideo 失败: " + e.getMessage());
-                            toast("未找到视频播放器");
-                        }
+                        } catch (Exception e) { toast("未找到视频播放器"); }
                     }
                 });
             }
@@ -189,50 +149,44 @@ public class MainActivity extends Activity {
         webView.loadUrl("file:///android_asset/index.html");
     }
 
-    // ===== 侧滑返回 =====
+    private void openVideo(String url, String title) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            intent.setDataAndType(Uri.parse(url), "video/*");
+            startActivity(intent);
+        } catch (Exception e) { toast("未找到视频播放器"); }
+    }
+
+    // 侧滑返回
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        switch (event.getAction()) {
-            case MotionEvent.ACTION_DOWN:
-                startX = event.getX();
-                break;
-            case MotionEvent.ACTION_UP:
-                float endX = event.getX();
-                float deltaX = endX - startX;
-                // 从左边缘右滑返回
-                if (startX < 50 && deltaX > SWIPE_THRESHOLD) {
-                    handleBack();
-                    return true;
-                }
-                break;
+        if (event.getAction() == MotionEvent.ACTION_DOWN) startX = event.getX();
+        else if (event.getAction() == MotionEvent.ACTION_UP) {
+            if (startX < 60 && event.getX() - startX > SWIPE_THRESHOLD) { handleBack(); return true; }
         }
         return super.onTouchEvent(event);
     }
 
-    // ===== 返回键处理 =====
     @Override
-    public void onBackPressed() {
-        handleBack();
-    }
+    public void onBackPressed() { handleBack(); }
 
     private void handleBack() {
-        // 检查当前显示的页面，按层级关闭
-        webView.evaluateJavascript("(function(){var p=document.getElementById('playerPage');if(p&&p.classList.contains('show')){closePlayer();return 'player';}var d=document.getElementById('detailPage');if(d&&d.classList.contains('show')){closeDetail();return 'detail';}var m=document.getElementById('modalOverlay');if(m&&m.classList.contains('show')){closeModal();return 'modal';}return 'none';})()", new ValueCallback<String>() {
-            @Override
-            public void onReceiveValue(String value) {
-                String page = value.replace("\"", "");
-                if ("none".equals(page)) {
-                    // 在主页面，按返回键退出
-                    long now = System.currentTimeMillis();
-                    if (now - lastBackTime < 2000) {
-                        finish();
-                    } else {
-                        lastBackTime = now;
-                        Toast.makeText(MainActivity.this, "再按一次退出", Toast.LENGTH_SHORT).show();
+        webView.evaluateJavascript(
+            "(function(){" +
+            "var p=document.getElementById('playerPage');if(p&&p.classList.contains('show')){closePlayer();return 'player';}" +
+            "var d=document.getElementById('detailPage');if(d&&d.classList.contains('show')){closeDetail();return 'detail';}" +
+            "var m=document.getElementById('domainModal');if(m&&m.classList.contains('show')){closeDomainManager();return 'modal';}" +
+            "return 'none';})()",
+            new ValueCallback<String>() {
+                public void onReceiveValue(String v) {
+                    String page = v.replace("\"","");
+                    if ("none".equals(page)) {
+                        long now = System.currentTimeMillis();
+                        if (now - lastBackTime < 2000) finish();
+                        else { lastBackTime = now; Toast.makeText(MainActivity.this, "再按一次退出", Toast.LENGTH_SHORT).show(); }
                     }
                 }
-            }
-        });
+            });
     }
 
     private WebResourceResponse doHttpRequest(String url) {
@@ -242,33 +196,26 @@ public class MainActivity extends Activity {
             conn.setConnectTimeout(15000);
             conn.setReadTimeout(15000);
             conn.setRequestProperty("Accept", "application/json, text/plain, */*");
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36");
-
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
             int code = conn.getResponseCode();
             InputStream is = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             byte[] buf = new byte[4096];
             int len;
             while ((len = is.read(buf)) != -1) baos.write(buf, 0, len);
-            is.close();
-            conn.disconnect();
-
-            byte[] bytes = baos.toByteArray();
+            is.close(); conn.disconnect();
             return new WebResourceResponse("application/json", "UTF-8", code,
-                code >= 200 && code < 300 ? "OK" : "Error", null, new ByteArrayInputStream(bytes));
+                code >= 200 && code < 300 ? "OK" : "Error", null, new ByteArrayInputStream(baos.toByteArray()));
         } catch (Exception e) {
-            try {
-                String err = "{\"code\":0,\"msg\":\"" + e.getMessage() + "\"}";
-                return new WebResourceResponse("application/json", "UTF-8", 500, "Error", null, new ByteArrayInputStream(err.getBytes("UTF-8")));
+            try { String err="{\"code\":0,\"msg\":\""+e.getMessage()+"\"}";
+                return new WebResourceResponse("application/json","UTF-8",500,"Error",null,new ByteArrayInputStream(err.getBytes("UTF-8")));
             } catch (Exception ex) { return null; }
         }
     }
 
-    private void toast(String msg) {
-        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
-    }
+    private void toast(String msg) { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show(); }
 
-    @Override protected void onPause() { super.onPause(); webView.onPause(); }
-    @Override protected void onResume() { super.onResume(); webView.onResume(); }
-    @Override protected void onDestroy() { super.onDestroy(); pool.shutdown(); webView.destroy(); }
+    @Override protected void onPause() { super.onPause(); if(webView!=null) webView.onPause(); }
+    @Override protected void onResume() { super.onResume(); if(webView!=null) webView.onResume(); }
+    @Override protected void onDestroy() { super.onDestroy(); pool.shutdown(); if(webView!=null) webView.destroy(); }
 }
