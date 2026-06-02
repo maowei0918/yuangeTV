@@ -228,20 +228,24 @@ img{display:block;max-width:100%}
 // ===== XHR 封装（兼容 Android WebView shouldInterceptRequest） =====
 function httpGet(url, timeoutMs) {
   return new Promise(function(resolve, reject) {
+    console.log('httpGet 开始: ' + url);
     var xhr = new XMLHttpRequest();
     xhr.open('GET', url, true);
     xhr.timeout = timeoutMs || 10000;
     xhr.setRequestHeader('Accept', 'application/json, text/plain, */*');
     xhr.onreadystatechange = function() {
+      console.log('httpGet readyState=' + xhr.readyState + ' status=' + xhr.status);
       if (xhr.readyState !== 4) return;
       if (xhr.status >= 200 && xhr.status < 300) {
+        console.log('httpGet 成功, 响应长度=' + xhr.responseText.length);
         resolve({ ok: true, status: xhr.status, text: function() { return Promise.resolve(xhr.responseText); }, json: function() { return Promise.resolve(JSON.parse(xhr.responseText)); } });
       } else {
+        console.log('httpGet 失败, status=' + xhr.status);
         reject(new Error('HTTP ' + xhr.status));
       }
     };
-    xhr.ontimeout = function() { reject(new Error('请求超时')); };
-    xhr.onerror = function() { reject(new Error('网络错误')); };
+    xhr.ontimeout = function() { console.log('httpGet 超时'); reject(new Error('请求超时')); };
+    xhr.onerror = function() { console.log('httpGet 网络错误'); reject(new Error('网络错误')); };
     xhr.send();
   });
 }
@@ -569,7 +573,7 @@ async function openDetail(vodId, domainUrl) {
   document.getElementById('detailBody').innerHTML = '<div class="loading"><div class="spinner"></div>加载详情...</div>';
 
   try {
-    var resp = await httpGet(getApiUrl(domain, 'vod/get_detail?vod_id=' + vodId), 10000);
+    var resp = await httpGet(domain.url + '/api.php/provide/vod/?ac=detail&ids=' + vodId, 10000);
     const data = await resp.json();
     if (data.code !== 1) { showToast('加载详情失败'); closeDetail(); return; }
     var vod = (data.list && data.list[0]) || data.info || {};

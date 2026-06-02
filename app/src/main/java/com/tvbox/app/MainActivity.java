@@ -23,7 +23,6 @@ public class MainActivity extends Activity {
     private WebView webView;
     private long lastBackTime = 0;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private final ExecutorService pool = Executors.newFixedThreadPool(4);
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -49,7 +48,7 @@ public class MainActivity extends Activity {
         s.setAllowUniversalAccessFromFileURLs(true);
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         s.setMediaPlaybackRequiresUserGesture(false);
-        s.setCacheMode(WebSettings.LOAD_DEFAULT);
+        s.setCacheMode(WebSettings.LOAD_NO_CACHE); // 禁用缓存，确保加载最新 HTML
 
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
 
@@ -58,6 +57,7 @@ public class MainActivity extends Activity {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
+                Log.d("TVBox", "shouldOverrideUrlLoading: " + url);
                 if (url.endsWith(".m3u8") || url.endsWith(".mp4") || url.endsWith(".flv")) {
                     try { startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(url), "video/*")); }
                     catch (Exception e) { toast("未找到视频播放器"); }
@@ -70,14 +70,16 @@ public class MainActivity extends Activity {
                 return true;
             }
 
-            // 拦截 API 请求（包括 fetch、XHR）
+            // 拦截所有网络请求（包括 XHR、fetch、资源加载）
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
                 Log.d("TVBox", "shouldInterceptRequest: " + url);
                 if (url.contains("/api.php/")) {
-                    Log.d("TVBox", "拦截到 API 请求: " + url);
-                    return doHttpRequest(url);
+                    Log.d("TVBox", ">>> 拦截到 API 请求: " + url);
+                    WebResourceResponse resp = doHttpRequest(url);
+                    Log.d("TVBox", "<<< 返回拦截结果: " + (resp != null ? "成功" : "null"));
+                    return resp;
                 }
                 return super.shouldInterceptRequest(view, request);
             }
@@ -87,7 +89,7 @@ public class MainActivity extends Activity {
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onConsoleMessage(ConsoleMessage msg) {
-                Log.d("TVBoxJS", msg.message());
+                Log.d("TVBoxJS", "line " + msg.lineNumber() + ": " + msg.message());
                 return true;
             }
 
@@ -116,11 +118,9 @@ public class MainActivity extends Activity {
         webView.loadUrl("file:///android_asset/index.html");
     }
 
-    /**
-     * 在后台线程发起 HTTP 请求，返回 WebResourceResponse
-     */
     private WebResourceResponse doHttpRequest(String url) {
         try {
+            Log.d("TVBox", "doHttpRequest: " + url);
             HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(15000);
@@ -140,14 +140,14 @@ public class MainActivity extends Activity {
 
             byte[] bytes = baos.toByteArray();
             String raw = new String(bytes, "UTF-8");
-            Log.d("TVBox", "API " + code + " 前100: " + raw.substring(0, Math.min(100, raw.length())));
+            Log.d("TVBox", "API 响应 " + code + " 前100: " + raw.substring(0, Math.min(100, raw.length())));
 
             // 强制返回 application/json
             return new WebResourceResponse("application/json", "UTF-8", code,
                 code >= 200 && code < 300 ? "OK" : "Error", null, new ByteArrayInputStream(bytes));
 
         } catch (Exception e) {
-            Log.e("TVBox", "API 请求失败: " + e.getMessage());
+            Log.e("TVBox", "doHttpRequest 失败: " + e.getMessage());
             try {
                 String err = "{\"code\":0,\"msg\":\"" + e.getMessage() + "\"}";
                 return new WebResourceResponse("application/json", "UTF-8", 500, "Error", null, new ByteArrayInputStream(err.getBytes("UTF-8")));
@@ -173,5 +173,5 @@ public class MainActivity extends Activity {
 
     @Override protected void onPause() { super.onPause(); webView.onPause(); }
     @Override protected void onResume() { super.onResume(); webView.onResume(); }
-    @Override protected void onDestroy() { super.onDestroy(); pool.shutdown(); webView.destroy(); }
+    @Override protected void onDestroy() { super.onDestroy(); webView.destroy(); }
 }
