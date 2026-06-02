@@ -14,12 +14,10 @@ import android.view.WindowManager;
 import android.webkit.*;
 import android.widget.Toast;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
+import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
 
 public class MainActivity extends Activity {
     private WebView webView;
@@ -31,8 +29,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        
-        // 全屏沉浸式
+
         getWindow().setFlags(
             WindowManager.LayoutParams.FLAG_FULLSCREEN,
             WindowManager.LayoutParams.FLAG_FULLSCREEN
@@ -66,31 +63,22 @@ public class MainActivity extends Activity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         settings.setMediaPlaybackRequiresUserGesture(false);
 
-        // 硬件加速
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
 
-        // WebViewClient
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
-                // 视频链接用外部播放器
                 if (url.endsWith(".m3u8") || url.endsWith(".mp4") || url.endsWith(".flv")) {
                     Intent intent = new Intent(Intent.ACTION_VIEW);
                     intent.setDataAndType(Uri.parse(url), "video/*");
-                    try {
-                        startActivity(intent);
-                    } catch (Exception e) {
+                    try { startActivity(intent); } catch (Exception e) {
                         Toast.makeText(MainActivity.this, "未找到视频播放器", Toast.LENGTH_SHORT).show();
                     }
                     return true;
                 }
-                // 解析页面在 WebView 内打开
-                if (url.contains("jiexi") || url.contains("jx.") || url.contains("parse")) {
-                    return false;
-                }
-                // 其他链接外部浏览器
                 if (!url.startsWith("http")) return false;
+                if (url.contains("jiexi") || url.contains("jx.") || url.contains("parse")) return false;
                 try {
                     Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
                     startActivity(intent);
@@ -100,23 +88,25 @@ public class MainActivity extends Activity {
                 return true;
             }
 
+            // 拦截 API 请求，用 Java 端 HTTP 请求替代
             @Override
-            public void onPageFinished(WebView view, String url) {
-                super.onPageFinished(view, url);
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                String url = request.getUrl().toString();
+                // 只拦截 maccms API 请求
+                if (url.contains("/api.php/provide/vod/")) {
+                    return interceptApiRequest(url);
+                }
+                return super.shouldInterceptRequest(view, request);
             }
         });
 
-        // WebChromeClient - 支持全屏
         webView.setWebChromeClient(new WebChromeClient() {
             private View customView;
             private WebChromeClient.CustomViewCallback customViewCallback;
 
             @Override
             public void onShowCustomView(View view, WebChromeClient.CustomViewCallback callback) {
-                if (customView != null) {
-                    callback.onCustomViewHidden();
-                    return;
-                }
+                if (customView != null) { callback.onCustomViewHidden(); return; }
                 customView = view;
                 customViewCallback = callback;
                 getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -131,18 +121,72 @@ public class MainActivity extends Activity {
                 customViewCallback.onCustomViewHidden();
                 customView = null;
             }
-
-            @Override
-            public void onProgressChanged(WebView view, int newProgress) {
-                // 可以在这里更新加载进度
-            }
         });
 
-        // JS Bridge
         webView.addJavascriptInterface(new JsBridge(), "Android");
-
-        // 加载本地页面
         webView.loadUrl("file:///android_asset/index.html");
+    }
+
+    /**
+     * 拦截 API 请求：在 Java 端发起 HTTP 请求，绕过 CORS 限制
+     */
+    private WebResourceResponse interceptApiRequest(String url) {
+        try {
+            URL reqUrl = new URL(url);
+            HttpURLConnection conn = (HttpURLConnection) reqUrl.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(15000);
+            conn.setRequestProperty("Accept", "application/json, text/plain, */*");
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36");
+
+            int code = conn.getResponseCode();
+            InputStream stream = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
+
+            // 读取全部响应
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            byte[] buf = new byte[4096];
+            int len;
+            while ((len = stream.read(buf)) != -1) {
+                baos.write(buf, 0, len);
+            }
+            stream.close();
+            conn.disconnect();
+
+            byte[] responseBytes = baos.toByteArray();
+            String responseStr = new String(responseBytes, "UTF-8");
+
+            // 调试日志
+            android.util.Log.d("TVBox", "拦截 API: " + url + " -> HTTP " + code + ", 长度=" + responseBytes.length);
+            if (responseStr.length() > 0) {
+                android.util.Log.d("TVBox", "响应前100: " + responseStr.substring(0, Math.min(100, responseStr.length())));
+            }
+
+            // 返回 WebResourceResponse，强制 Content-Type 为 application/json
+            InputStream responseStream = new ByteArrayInputStream(responseBytes);
+            return new WebResourceResponse(
+                "application/json",
+                "UTF-8",
+                code,
+                code >= 200 && code < 300 ? "OK" : "Error",
+                null,
+                responseStream
+            );
+
+        } catch (Exception e) {
+            android.util.Log.e("TVBox", "拦截 API 失败: " + e.getMessage());
+            // 返回空响应
+            try {
+                String errorJson = "{\"code\":0,\"msg\":\"" + e.getMessage() + "\",\"list\":[]}";
+                return new WebResourceResponse(
+                    "application/json", "UTF-8",
+                    500, "Internal Error", null,
+                    new ByteArrayInputStream(errorJson.getBytes("UTF-8"))
+                );
+            } catch (Exception ex) {
+                return null;
+            }
+        }
     }
 
     // JS Bridge 类
@@ -157,71 +201,8 @@ public class MainActivity extends Activity {
             mainHandler.post(() -> {
                 Intent intent = new Intent(Intent.ACTION_VIEW);
                 intent.setDataAndType(Uri.parse(url), "video/*");
-                try {
-                    startActivity(intent);
-                } catch (Exception e) {
-                    Toast.makeText(MainActivity.this, "未找到视频播放器", Toast.LENGTH_SHORT).show();
-                }
-            });
-        }
-
-        @android.webkit.JavascriptInterface
-        public void httpGet(final String url, final String callbackId) {
-            httpExecutor.execute(() -> {
-                String responseData = null;
-                String errorMsg = null;
-                int httpCode = 0;
-
-                try {
-                    URL reqUrl = new URL(url);
-                    HttpURLConnection conn = (HttpURLConnection) reqUrl.openConnection();
-                    conn.setRequestMethod("GET");
-                    conn.setConnectTimeout(15000);
-                    conn.setReadTimeout(15000);
-                    conn.setRequestProperty("Accept", "application/json, text/plain, */*");
-                    conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36");
-
-                    httpCode = conn.getResponseCode();
-                    BufferedReader reader = new BufferedReader(
-                        new InputStreamReader(
-                            httpCode >= 200 && httpCode < 300 ? conn.getInputStream() : conn.getErrorStream(),
-                            "UTF-8"
-                        )
-                    );
-                    StringBuilder sb = new StringBuilder();
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        sb.append(line).append("\n");
-                    }
-                    reader.close();
-                    conn.disconnect();
-
-                    String rawResponse = sb.toString();
-                    // 调试：打印前200字符
-                    android.util.Log.d("TVBox", "HTTP " + httpCode + " 响应(前200): " + rawResponse.substring(0, Math.min(200, rawResponse.length())));
-                    responseData = Base64.encodeToString(rawResponse.getBytes("UTF-8"), Base64.NO_WRAP);
-                } catch (Exception e) {
-                    errorMsg = e.getMessage();
-                    if (errorMsg == null) errorMsg = "Unknown error";
-                    android.util.Log.e("TVBox", "HTTP 请求失败: " + errorMsg);
-                }
-
-                final String b64Data = responseData;
-                final String err = errorMsg;
-                final int code = httpCode;
-
-                mainHandler.post(() -> {
-                    StringBuilder js = new StringBuilder();
-                    js.append("if(window._httpCallbacks['").append(callbackId).append("']){");
-                    if (err != null) {
-                        js.append("window._httpCallbacks['").append(callbackId).append("']({error:'").append(err.replace("'", "\\'")).append("',status:").append(code).append("});");
-                    } else {
-                        js.append("window._httpCallbacks['").append(callbackId).append("']({data:'").append(b64Data).append("',status:").append(code).append("});");
-                    }
-                    js.append("delete window._httpCallbacks['").append(callbackId).append("'];");
-                    js.append("}");
-                    webView.evaluateJavascript(js.toString(), null);
-                });
+                try { startActivity(intent); }
+                catch (Exception e) { Toast.makeText(MainActivity.this, "未找到视频播放器", Toast.LENGTH_SHORT).show(); }
             });
         }
     }
@@ -229,41 +210,21 @@ public class MainActivity extends Activity {
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
-            // 如果 WebView 在全屏视频模式，先退出全屏
-            // 如果 WebView 可以后退，先后退
-            if (webView.canGoBack()) {
-                webView.goBack();
-                return true;
-            }
-            // 双击退出
+            if (webView.canGoBack()) { webView.goBack(); return true; }
             long now = System.currentTimeMillis();
-            if (now - lastBackTime < 2000) {
-                finish();
-            } else {
-                lastBackTime = now;
-                Toast.makeText(this, "再按一次退出", Toast.LENGTH_SHORT).show();
-            }
+            if (now - lastBackTime < 2000) { finish(); }
+            else { lastBackTime = now; Toast.makeText(this, "再按一次退出", Toast.LENGTH_SHORT).show(); }
             return true;
         }
         return super.onKeyDown(keyCode, event);
     }
 
     @Override
-    protected void onPause() {
-        super.onPause();
-        webView.onPause();
-    }
+    protected void onPause() { super.onPause(); webView.onPause(); }
 
     @Override
-    protected void onResume() {
-        super.onResume();
-        webView.onResume();
-    }
+    protected void onResume() { super.onResume(); webView.onResume(); }
 
     @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        httpExecutor.shutdown();
-        webView.destroy();
-    }
+    protected void onDestroy() { super.onDestroy(); httpExecutor.shutdown(); webView.destroy(); }
 }

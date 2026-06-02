@@ -36,6 +36,28 @@ const state = {
   currentParseIndex: 0,
 };
 
+// ==================== API 测试 ====================
+function testApi() {
+  const site = state.sites[state.currentSite];
+  if (!site) { showToast('请先添加站点'); return; }
+  const url = site.url.replace(/\/+$/, '') + API_SUFFIX + '?ac=list&pg=1';
+  showToast('正在测试...');
+  console.log('测试 API:', url);
+  fetch(url, { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(10000) })
+    .then(res => {
+      console.log('测试响应:', res.status, res.headers.get('content-type'));
+      return res.text();
+    })
+    .then(text => {
+      console.log('测试响应内容:', text.substring(0, 200));
+      showToast('响应前100字符: ' + text.substring(0, 100));
+    })
+    .catch(err => {
+      console.error('测试失败:', err);
+      showToast('测试失败: ' + err.message);
+    });
+}
+
 // ==================== 数据持久化 ====================
 function loadData() {
   try {
@@ -56,79 +78,28 @@ function saveData() {
 }
 
 // ==================== API 请求 ====================
-// 回调 ID 计数器
-let _httpCallbackId = 0;
-// 回调映射表
-window._httpCallbacks = {};
-
-/**
- * 通过 Android JS Bridge 发起 HTTP GET 请求（绕过 CORS）
- */
-function httpGetViaBridge(url) {
-  return new Promise((resolve, reject) => {
-    const callbackId = 'cb_' + (++_httpCallbackId);
-    window._httpCallbacks[callbackId] = (result) => {
-      delete window._httpCallbacks[callbackId];
-      if (result.error) {
-        reject(new Error('Bridge错误: ' + result.error + ' (HTTP ' + result.status + ')'));
-      } else {
-        try {
-          // Base64 解码
-          const decoded = atob(result.data);
-          // 调试：把前100字符显示在控制台
-          console.log('HTTP Bridge 响应(前100):', decoded.substring(0, 100));
-          resolve(decoded);
-        } catch (e) {
-          reject(new Error('Base64解码失败: ' + e.message));
-        }
-      }
-    };
-    // 超时处理
-    setTimeout(() => {
-      if (window._httpCallbacks[callbackId]) {
-        delete window._httpCallbacks[callbackId];
-        reject(new Error('请求超时(20s)'));
-      }
-    }, 20000);
-    console.log('HTTP Bridge 请求:', url);
-    Android.httpGet(url, callbackId);
-  });
-}
-
 async function apiRequest(siteUrl, params = {}) {
   const base = siteUrl.replace(/\/+$/, '') + API_SUFFIX;
   const query = new URLSearchParams(params).toString();
   const url = base + (query ? '?' + query : '');
 
-  // 优先用 JS Bridge（Android WebView 中绕过 CORS）
-  if (typeof Android !== 'undefined' && Android.httpGet) {
-    try {
-      const raw = await httpGetViaBridge(url);
-      const data = JSON.parse(raw);
-      return data;
-    } catch (err) {
-      throw new Error('请求失败: ' + err.message);
-    }
-  }
+  console.log('API 请求:', url);
 
-  // 浏览器环境：直接 fetch
+  // 直接 fetch — Android WebView 中 shouldInterceptRequest 会拦截 API 请求
   try {
     const res = await fetch(url, {
       headers: { 'Accept': 'application/json' },
       signal: AbortSignal.timeout(15000),
     });
+    console.log('API 响应状态:', res.status, res.headers.get('content-type'));
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+    const text = await res.text();
+    console.log('API 响应前100:', text.substring(0, 100));
+    const data = JSON.parse(text);
     return data;
   } catch (err) {
-    // 尝试通过 CORS 代理
-    const proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url);
-    try {
-      const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(15000) });
-      return await res.json();
-    } catch (e2) {
-      throw new Error('请求失败: ' + err.message);
-    }
+    console.error('API 请求失败:', err);
+    throw new Error('请求失败: ' + err.message);
   }
 }
 
@@ -261,7 +232,8 @@ async function loadCategories() {
         <div style="font-size:14px;margin:8px 0">加载失败</div>
         <div style="font-size:11px;color:#999;word-break:break-all;max-width:100%;padding:0 10px">${err.message}</div>
         <div style="font-size:11px;color:#666;margin-top:8px">站点: ${site.url}</div>
-        <div style="font-size:11px;color:#666">Bridge: ${typeof Android !== 'undefined' && Android.httpGet ? '可用' : '不可用'}</div>
+        <div style="font-size:11px;color:#666;margin-top:4px">URL: ${site.url.replace(/\/+$/, '') + API_SUFFIX}</div>
+        <button onclick="testApi()" style="margin-top:12px;padding:8px 16px;background:#e50914;color:#fff;border:none;border-radius:4px;font-size:13px;cursor:pointer">测试 API</button>
       </div>
     `;
   }
