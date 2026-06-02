@@ -664,6 +664,15 @@ function closeDetail() {
 }
 
 // ===== 播放 =====
+// 解析接口列表
+var PARSE_URLS = [
+  'https://jx.jsonplayer.com/player/?url=',
+  'https://jx.aidouer.net/?url=',
+  'https://jx.xflfl.com/?url=',
+  'https://jx.yangtu.top/?url=',
+  'https://jx.m3u8.tv/jiexi/?url=',
+];
+
 function playVideo(url, epName, vodName) {
   url = decodeURIComponent(url);
   epName = decodeURIComponent(epName);
@@ -680,26 +689,73 @@ function playVideo(url, epName, vodName) {
   const isM3U8 = /\.m3u8(\?|$)/i.test(url);
 
   if (isVideo || isM3U8) {
-    if (isM3U8 && Hls && Hls.isSupported()) {
-      container.innerHTML = '<video id="videoPlayer" controls autoplay playsinline></video>';
-      const video = document.getElementById('videoPlayer');
-      const hls = new Hls();
-      hls.loadSource(url);
-      hls.attachMedia(video);
+    // 直接用系统播放器播放
+    container.innerHTML = `
+      <div class="unsupported">
+        <div class="icon">📺</div>
+        <p>正在调用播放器...</p>
+        <p style="word-break:break-all;font-size:11px;color:var(--text3);max-width:80%;margin-top:8px">${escapeHtml(url)}</p>
+      </div>
+    `;
+    // 调用系统播放器
+    if (typeof NativeHttp !== 'undefined' && NativeHttp && NativeHttp.openVideo) {
+      NativeHttp.openVideo(url, vodName + ' ' + epName);
     } else {
-      container.innerHTML = `<video id="videoPlayer" src="${escapeHtml(url)}" controls autoplay playsinline></video>`;
+      // 降级：用 Intent 打开
+      window.location.href = 'intent:' + url + '#Intent;type=video/*;end';
     }
   } else {
-    // 无法直接播放，显示链接
+    // 无法直接播放，尝试解析
+    container.innerHTML = `
+      <div class="unsupported">
+        <div class="icon">🔄</div>
+        <p>正在解析播放地址...</p>
+        <p style="word-break:break-all;font-size:11px;color:var(--text3);max-width:80%;margin-top:8px">${escapeHtml(url)}</p>
+      </div>
+    `;
+    // 依次尝试解析接口
+    tryParse(url, vodName, epName, container, 0);
+  }
+}
+
+// 依次尝试解析接口
+function tryParse(url, vodName, epName, container, index) {
+  if (index >= PARSE_URLS.length) {
+    // 所有解析接口都失败了，直接显示链接
     container.innerHTML = `
       <div class="unsupported">
         <div class="icon">🔗</div>
-        <p>该链接无法直接播放<br>请复制地址到播放器打开</p>
+        <p>解析失败，请复制地址到播放器打开</p>
         <p style="word-break:break-all;font-size:11px;color:var(--text3);max-width:80%">${escapeHtml(url)}</p>
-        <a href="${escapeHtml(url)}" target="_blank">在浏览器中打开</a>
       </div>
     `;
+    return;
   }
+  var parseUrl = PARSE_URLS[index] + encodeURIComponent(url);
+  console.log('尝试解析 ' + index + ': ' + parseUrl);
+  httpGet(parseUrl, 10000).then(function(resp) {
+    return resp.text();
+  }).then(function(text) {
+    // 检查解析结果中是否包含视频地址
+    var videoMatch = text.match(/(https?:\/\/[^"'\s]+\.(mp4|m3u8|flv)[^"'\s]*)/i);
+    if (videoMatch) {
+      // 找到视频地址，用系统播放器播放
+      var videoUrl = videoMatch[1];
+      console.log('解析成功: ' + videoUrl);
+      container.innerHTML = '<div class="unsupported"><div class="icon">📺</div><p>解析成功，正在播放...</p></div>';
+      if (typeof NativeHttp !== 'undefined' && NativeHttp && NativeHttp.openVideo) {
+        NativeHttp.openVideo(videoUrl, vodName + ' ' + epName);
+      } else {
+        window.location.href = 'intent:' + videoUrl + '#Intent;type=video/*;end';
+      }
+    } else {
+      // 没找到，试下一个
+      tryParse(url, vodName, epName, container, index + 1);
+    }
+  }).catch(function(e) {
+    console.log('解析 ' + index + ' 失败: ' + e.message);
+    tryParse(url, vodName, epName, container, index + 1);
+  });
 }
 
 function closePlayer() {

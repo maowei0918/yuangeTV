@@ -9,6 +9,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
 import android.webkit.*;
@@ -24,6 +25,10 @@ public class MainActivity extends Activity {
     private long lastBackTime = 0;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService pool = Executors.newFixedThreadPool(4);
+
+    // 侧滑返回相关
+    private float startX = 0;
+    private static final float SWIPE_THRESHOLD = 100; // 侧滑阈值
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -110,11 +115,11 @@ public class MainActivity extends Activity {
             }
         });
 
-        // === Bridge：JS 调用 Java 发 HTTP 请求 ===
+        // === Bridge：JS 调用 Java ===
         webView.addJavascriptInterface(new Object() {
             @JavascriptInterface
             public void httpGet(final String url, final String callbackId) {
-                Log.d("TVBox", "Bridge.httpGet: " + url + " cb=" + callbackId);
+                Log.d("TVBox", "Bridge.httpGet: " + url);
                 pool.execute(new Runnable() {
                     @Override
                     public void run() {
@@ -138,7 +143,6 @@ public class MainActivity extends Activity {
                             String raw = new String(baos.toByteArray(), "UTF-8");
                             Log.d("TVBox", "Bridge 响应 " + code + " 前80: " + raw.substring(0, Math.min(80, raw.length())));
 
-                            // 转义 JSON 字符串
                             String escaped = raw.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r");
                             final String js = "if(window._httpCallbacks['" + callbackId + "']){window._httpCallbacks['" + callbackId + "']('" + escaped + "');delete window._httpCallbacks['" + callbackId + "'];}";
                             mainHandler.post(new Runnable() {
@@ -160,9 +164,75 @@ public class MainActivity extends Activity {
                     }
                 });
             }
+
+            // 调用系统播放器播放视频
+            @JavascriptInterface
+            public void openVideo(final String url, final String title) {
+                Log.d("TVBox", "openVideo: " + url);
+                mainHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            Intent intent = new Intent(Intent.ACTION_VIEW);
+                            intent.setDataAndType(Uri.parse(url), "video/*");
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                            startActivity(intent);
+                        } catch (Exception e) {
+                            Log.e("TVBox", "openVideo 失败: " + e.getMessage());
+                            toast("未找到视频播放器");
+                        }
+                    }
+                });
+            }
         }, "NativeHttp");
 
         webView.loadUrl("file:///android_asset/index.html");
+    }
+
+    // ===== 侧滑返回 =====
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        switch (event.getAction()) {
+            case MotionEvent.ACTION_DOWN:
+                startX = event.getX();
+                break;
+            case MotionEvent.ACTION_UP:
+                float endX = event.getX();
+                float deltaX = endX - startX;
+                // 从左边缘右滑返回
+                if (startX < 50 && deltaX > SWIPE_THRESHOLD) {
+                    handleBack();
+                    return true;
+                }
+                break;
+        }
+        return super.onTouchEvent(event);
+    }
+
+    // ===== 返回键处理 =====
+    @Override
+    public void onBackPressed() {
+        handleBack();
+    }
+
+    private void handleBack() {
+        // 检查当前显示的页面，按层级关闭
+        webView.evaluateJavascript("(function(){var p=document.getElementById('playerPage');if(p&&p.classList.contains('show')){closePlayer();return 'player';}var d=document.getElementById('detailPage');if(d&&d.classList.contains('show')){closeDetail();return 'detail';}var m=document.getElementById('modalOverlay');if(m&&m.classList.contains('show')){closeModal();return 'modal';}return 'none';})()", new ValueCallback<String>() {
+            @Override
+            public void onReceiveValue(String value) {
+                String page = value.replace("\"", "");
+                if ("none".equals(page)) {
+                    // 在主页面，按返回键退出
+                    long now = System.currentTimeMillis();
+                    if (now - lastBackTime < 2000) {
+                        finish();
+                    } else {
+                        lastBackTime = now;
+                        Toast.makeText(MainActivity.this, "再按一次退出", Toast.LENGTH_SHORT).show();
+                    }
+                }
+            }
+        });
     }
 
     private WebResourceResponse doHttpRequest(String url) {
@@ -196,18 +266,6 @@ public class MainActivity extends Activity {
 
     private void toast(String msg) {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
-    }
-
-    @Override
-    public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (keyCode == KeyEvent.KEYCODE_BACK) {
-            if (webView.canGoBack()) { webView.goBack(); return true; }
-            long now = System.currentTimeMillis();
-            if (now - lastBackTime < 2000) finish();
-            else { lastBackTime = now; Toast.makeText(this, "再按一次退出", Toast.LENGTH_SHORT).show(); }
-            return true;
-        }
-        return super.onKeyDown(keyCode, event);
     }
 
     @Override protected void onPause() { super.onPause(); webView.onPause(); }
