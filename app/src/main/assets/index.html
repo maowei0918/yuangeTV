@@ -229,24 +229,47 @@ img{display:block;max-width:100%}
 function httpGet(url, timeoutMs) {
   return new Promise(function(resolve, reject) {
     console.log('httpGet 开始: ' + url);
-    var xhr = new XMLHttpRequest();
-    xhr.open('GET', url, true);
-    xhr.timeout = timeoutMs || 10000;
-    xhr.setRequestHeader('Accept', 'application/json, text/plain, */*');
-    xhr.onreadystatechange = function() {
-      console.log('httpGet readyState=' + xhr.readyState + ' status=' + xhr.status);
-      if (xhr.readyState !== 4) return;
-      if (xhr.status >= 200 && xhr.status < 300) {
-        console.log('httpGet 成功, 响应长度=' + xhr.responseText.length);
-        resolve({ ok: true, status: xhr.status, text: function() { return Promise.resolve(xhr.responseText); }, json: function() { return Promise.resolve(JSON.parse(xhr.responseText)); } });
-      } else {
-        console.log('httpGet 失败, status=' + xhr.status);
-        reject(new Error('HTTP ' + xhr.status));
-      }
-    };
-    xhr.ontimeout = function() { console.log('httpGet 超时'); reject(new Error('请求超时')); };
-    xhr.onerror = function() { console.log('httpGet 网络错误'); reject(new Error('网络错误')); };
-    xhr.send();
+    // 优先用 NativeHttp Bridge（绕过 CORS）
+    if (typeof NativeHttp !== 'undefined' && NativeHttp && NativeHttp.httpGet) {
+      console.log('使用 NativeHttp Bridge');
+      var cbId = 'cb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+      window._httpCallbacks = window._httpCallbacks || {};
+      var timer = setTimeout(function() {
+        if (window._httpCallbacks[cbId]) {
+          delete window._httpCallbacks[cbId];
+          reject(new Error('请求超时'));
+        }
+      }, timeoutMs || 10000);
+      window._httpCallbacks[cbId] = function(result) {
+        clearTimeout(timer);
+        delete window._httpCallbacks[cbId];
+        console.log('NativeHttp 回调: ' + result.substring(0, 50));
+        if (result.indexOf('ERROR:') === 0) {
+          reject(new Error(result.substring(6)));
+        } else {
+          resolve({ ok: true, status: 200, text: function() { return Promise.resolve(result); }, json: function() { return Promise.resolve(JSON.parse(result)); } });
+        }
+      };
+      NativeHttp.httpGet(url, cbId);
+    } else {
+      // 降级用 XHR
+      console.log('使用 XHR');
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', url, true);
+      xhr.timeout = timeoutMs || 10000;
+      xhr.setRequestHeader('Accept', 'application/json, text/plain, */*');
+      xhr.onreadystatechange = function() {
+        if (xhr.readyState !== 4) return;
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve({ ok: true, status: xhr.status, text: function() { return Promise.resolve(xhr.responseText); }, json: function() { return Promise.resolve(JSON.parse(xhr.responseText)); } });
+        } else {
+          reject(new Error('HTTP ' + xhr.status));
+        }
+      };
+      xhr.ontimeout = function() { reject(new Error('请求超时')); };
+      xhr.onerror = function() { reject(new Error('网络错误')); };
+      xhr.send();
+    }
   });
 }
 

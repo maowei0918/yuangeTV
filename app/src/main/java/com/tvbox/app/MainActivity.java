@@ -23,6 +23,7 @@ public class MainActivity extends Activity {
     private WebView webView;
     private long lastBackTime = 0;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final ExecutorService pool = Executors.newFixedThreadPool(4);
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -48,16 +49,15 @@ public class MainActivity extends Activity {
         s.setAllowUniversalAccessFromFileURLs(true);
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         s.setMediaPlaybackRequiresUserGesture(false);
-        s.setCacheMode(WebSettings.LOAD_NO_CACHE); // 禁用缓存，确保加载最新 HTML
+        s.setCacheMode(WebSettings.LOAD_NO_CACHE);
 
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
 
-        // === WebViewClient：拦截所有 API 请求 ===
+        // === WebViewClient ===
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
-                Log.d("TVBox", "shouldOverrideUrlLoading: " + url);
                 if (url.endsWith(".m3u8") || url.endsWith(".mp4") || url.endsWith(".flv")) {
                     try { startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(url), "video/*")); }
                     catch (Exception e) { toast("未找到视频播放器"); }
@@ -70,16 +70,12 @@ public class MainActivity extends Activity {
                 return true;
             }
 
-            // 拦截所有网络请求（包括 XHR、fetch、资源加载）
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
-                Log.d("TVBox", "shouldInterceptRequest: " + url);
                 if (url.contains("/api.php/")) {
-                    Log.d("TVBox", ">>> 拦截到 API 请求: " + url);
-                    WebResourceResponse resp = doHttpRequest(url);
-                    Log.d("TVBox", "<<< 返回拦截结果: " + (resp != null ? "成功" : "null"));
-                    return resp;
+                    Log.d("TVBox", "拦截 API: " + url);
+                    return doHttpRequest(url);
                 }
                 return super.shouldInterceptRequest(view, request);
             }
@@ -89,7 +85,7 @@ public class MainActivity extends Activity {
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onConsoleMessage(ConsoleMessage msg) {
-                Log.d("TVBoxJS", "line " + msg.lineNumber() + ": " + msg.message());
+                Log.d("TVBoxJS", msg.message());
                 return true;
             }
 
@@ -114,13 +110,63 @@ public class MainActivity extends Activity {
             }
         });
 
-        // 加载本地页面
+        // === Bridge：JS 调用 Java 发 HTTP 请求 ===
+        webView.addJavascriptInterface(new Object() {
+            @JavascriptInterface
+            public void httpGet(final String url, final String callbackId) {
+                Log.d("TVBox", "Bridge.httpGet: " + url + " cb=" + callbackId);
+                pool.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+                            conn.setRequestMethod("GET");
+                            conn.setConnectTimeout(15000);
+                            conn.setReadTimeout(15000);
+                            conn.setRequestProperty("Accept", "application/json, text/plain, */*");
+                            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36");
+
+                            int code = conn.getResponseCode();
+                            InputStream is = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
+                            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                            byte[] buf = new byte[4096];
+                            int len;
+                            while ((len = is.read(buf)) != -1) baos.write(buf, 0, len);
+                            is.close();
+                            conn.disconnect();
+
+                            String raw = new String(baos.toByteArray(), "UTF-8");
+                            Log.d("TVBox", "Bridge 响应 " + code + " 前80: " + raw.substring(0, Math.min(80, raw.length())));
+
+                            // 转义 JSON 字符串
+                            String escaped = raw.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r");
+                            final String js = "if(window._httpCallbacks['" + callbackId + "']){window._httpCallbacks['" + callbackId + "']('" + escaped + "');delete window._httpCallbacks['" + callbackId + "'];}";
+                            mainHandler.post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    webView.evaluateJavascript(js, null);
+                                }
+                            });
+                        } catch (final Exception e) {
+                            Log.e("TVBox", "Bridge 失败: " + e.getMessage());
+                            final String js = "if(window._httpCallbacks['" + callbackId + "']){window._httpCallbacks['" + callbackId + "']('ERROR:" + e.getMessage().replace("'", "\\'") + "');delete window._httpCallbacks['" + callbackId + "'];}";
+                            mainHandler.post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    webView.evaluateJavascript(js, null);
+                                }
+                            });
+                        }
+                    }
+                });
+            }
+        }, "NativeHttp");
+
         webView.loadUrl("file:///android_asset/index.html");
     }
 
     private WebResourceResponse doHttpRequest(String url) {
         try {
-            Log.d("TVBox", "doHttpRequest: " + url);
             HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(15000);
@@ -130,7 +176,6 @@ public class MainActivity extends Activity {
 
             int code = conn.getResponseCode();
             InputStream is = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
-
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             byte[] buf = new byte[4096];
             int len;
@@ -139,15 +184,9 @@ public class MainActivity extends Activity {
             conn.disconnect();
 
             byte[] bytes = baos.toByteArray();
-            String raw = new String(bytes, "UTF-8");
-            Log.d("TVBox", "API 响应 " + code + " 前100: " + raw.substring(0, Math.min(100, raw.length())));
-
-            // 强制返回 application/json
             return new WebResourceResponse("application/json", "UTF-8", code,
                 code >= 200 && code < 300 ? "OK" : "Error", null, new ByteArrayInputStream(bytes));
-
         } catch (Exception e) {
-            Log.e("TVBox", "doHttpRequest 失败: " + e.getMessage());
             try {
                 String err = "{\"code\":0,\"msg\":\"" + e.getMessage() + "\"}";
                 return new WebResourceResponse("application/json", "UTF-8", 500, "Error", null, new ByteArrayInputStream(err.getBytes("UTF-8")));
@@ -173,5 +212,5 @@ public class MainActivity extends Activity {
 
     @Override protected void onPause() { super.onPause(); webView.onPause(); }
     @Override protected void onResume() { super.onResume(); webView.onResume(); }
-    @Override protected void onDestroy() { super.onDestroy(); webView.destroy(); }
+    @Override protected void onDestroy() { super.onDestroy(); pool.shutdown(); webView.destroy(); }
 }
