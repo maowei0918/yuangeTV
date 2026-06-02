@@ -73,7 +73,7 @@ public class MainActivity extends Activity {
             // 页面加载完成后，注入 fetch 拦截器
             @Override
             public void onPageFinished(WebView view, String url) {
-                super.onPageFinished(url);
+                super.onPageFinished(view, url);
                 injectFetchInterceptor();
             }
         });
@@ -248,3 +248,4 @@ public class MainActivity extends Activity {
     @Override protected void onResume() { super.onResume(); webView.onResume(); }
     @Override protected void onDestroy() { super.onDestroy(); httpExecutor.shutdown(); webView.destroy(); }
 }
+// Tue Jun  2 13:32:22 CST 2026
