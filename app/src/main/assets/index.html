@@ -494,13 +494,14 @@ async function loadVideos() {
 }
 
 async function fetchVideosFromDomain(domain, typeId, page, limit) {
-  let url = getApiUrl(domain, `vod/get_list?offset=${(page - 1) * limit}&limit=${limit}&orderby=time`);
-  if (typeId > 0) url += `&type_id=${typeId}`;
+  let url = getApiUrl(domain, 'vod/get_list?offset=' + ((page - 1) * limit) + '&limit=' + limit + '&orderby=time');
+  if (typeId > 0) url += '&type_id=' + typeId;
   var resp = await httpGet(url, 10000);
   var data = await resp.json();
-  if (data.code === 1 && data.info) {
-    const list = (data.info.rows || []).map(v => ({ ...v, _domain: domain }));
-    return { list, total: data.info.total || 0 };
+  if (data.code === 1) {
+    var list = (data.list || data.info && data.info.rows || []).map(v => ({ ...v, _domain: domain }));
+    var total = data.total || (data.info && data.info.total) || 0;
+    return { list: list, total: total };
   }
   return { list: [], total: 0 };
 }
@@ -570,8 +571,10 @@ async function openDetail(vodId, domainUrl) {
   try {
     var resp = await httpGet(getApiUrl(domain, 'vod/get_detail?vod_id=' + vodId), 10000);
     const data = await resp.json();
-    if (data.code !== 1 || !data.info) { showToast('加载详情失败'); closeDetail(); return; }
-    renderDetail(data.info, domain);
+    if (data.code !== 1) { showToast('加载详情失败'); closeDetail(); return; }
+    var vod = (data.list && data.list[0]) || data.info || {};
+    if (!vod.vod_id) { showToast('无视频数据'); closeDetail(); return; }
+    renderDetail(vod, domain);
   } catch (e) {
     showToast('加载详情失败: ' + e.message);
     closeDetail();
