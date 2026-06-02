@@ -59,7 +59,11 @@ public class MainActivity extends Activity {
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
                 if (url.startsWith("intent:")) return true;
-                if (url.endsWith(".m3u8") || url.endsWith(".mp4") || url.endsWith(".flv")) {
+                String lower = url.toLowerCase();
+                if (lower.contains(".m3u8") || lower.contains(".mp4") || lower.contains(".flv")
+                    || lower.contains(".avi") || lower.contains(".mkv") || lower.contains(".mov")
+                    || lower.contains(".webm") || lower.contains(".ts")
+                    || lower.contains("m3u8?") || lower.contains("video") || lower.contains("stream")) {
                     openVideo(url, "");
                     return true;
                 }
@@ -145,6 +149,13 @@ public class MainActivity extends Activity {
                 });
             }
         }, "NativeHttp");
+
+        webView.setDownloadListener(new DownloadListener() {
+            @Override
+            public void onDownloadStart(String url, String userAgent, String contentDisposition, String mimeType, long contentLength) {
+                openVideo(url, "");
+            }
+        });
 
         webView.loadUrl("file:///android_asset/index.html");
     }
