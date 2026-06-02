@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -43,3 +43,13 @@ jobs:
       with:
         name: tvbox-debug-apk
         path: app/build/outputs/apk/debug/app-debug.apk
+
+    - name: Upload APK to Release
+      uses: svenstaro/upload-release-action@v2
+      with:
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        file: app/build/outputs/apk/debug/app-debug.apk
+        asset_name: tvbox-debug.apk
+        tag: v1.0.0
+        overwrite: true
+        body: "TVBox 视频盒子 - 自动编译"
