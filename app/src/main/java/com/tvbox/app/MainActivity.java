@@ -7,13 +7,13 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Base64;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.WindowManager;
 import android.webkit.*;
 import android.widget.Toast;
 
-import android.util.Base64;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
@@ -24,14 +24,14 @@ import java.util.concurrent.Executors;
 public class MainActivity extends Activity {
     private WebView webView;
     private long lastBackTime = 0;
-    private final ExecutorService executor = Executors.newFixedThreadPool(4);
+    private final ExecutorService httpExecutor = Executors.newFixedThreadPool(4);
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
+        
         // 全屏沉浸式
         getWindow().setFlags(
             WindowManager.LayoutParams.FLAG_FULLSCREEN,
@@ -99,6 +99,11 @@ public class MainActivity extends Activity {
                 }
                 return true;
             }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+            }
         });
 
         // WebChromeClient - 支持全屏
@@ -126,9 +131,14 @@ public class MainActivity extends Activity {
                 customViewCallback.onCustomViewHidden();
                 customView = null;
             }
+
+            @Override
+            public void onProgressChanged(WebView view, int newProgress) {
+                // 可以在这里更新加载进度
+            }
         });
 
-        // JS Bridge - 包含 HTTP 请求代理
+        // JS Bridge
         webView.addJavascriptInterface(new JsBridge(), "Android");
 
         // 加载本地页面
@@ -155,36 +165,29 @@ public class MainActivity extends Activity {
             });
         }
 
-        /**
-         * 通过 Java 发起 HTTP GET 请求，绕过 CORS 限制
-         * JS 调用: Android.httpGet(url, callbackId)
-         * 结果通过 Base64 编码后回调到 JS，避免转义问题
-         */
         @android.webkit.JavascriptInterface
         public void httpGet(final String url, final String callbackId) {
-            executor.execute(() -> {
-                final String response;
-                final String error;
-                final int statusCode;
+            httpExecutor.execute(() -> {
+                String responseData = null;
+                String errorMsg = null;
+                int httpCode = 0;
 
                 try {
-                    URL requestUrl = new URL(url);
-                    HttpURLConnection conn = (HttpURLConnection) requestUrl.openConnection();
+                    URL reqUrl = new URL(url);
+                    HttpURLConnection conn = (HttpURLConnection) reqUrl.openConnection();
                     conn.setRequestMethod("GET");
                     conn.setConnectTimeout(15000);
                     conn.setReadTimeout(15000);
                     conn.setRequestProperty("Accept", "application/json, text/plain, */*");
                     conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36");
 
-                    statusCode = conn.getResponseCode();
-
-                    BufferedReader reader;
-                    if (statusCode >= 200 && statusCode < 300) {
-                        reader = new BufferedReader(new InputStreamReader(conn.getInputStream(), "UTF-8"));
-                    } else {
-                        reader = new BufferedReader(new InputStreamReader(conn.getErrorStream(), "UTF-8"));
-                    }
-
+                    httpCode = conn.getResponseCode();
+                    BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(
+                            httpCode >= 200 && httpCode < 300 ? conn.getInputStream() : conn.getErrorStream(),
+                            "UTF-8"
+                        )
+                    );
                     StringBuilder sb = new StringBuilder();
                     String line;
                     while ((line = reader.readLine()) != null) {
@@ -193,25 +196,27 @@ public class MainActivity extends Activity {
                     reader.close();
                     conn.disconnect();
 
-                    // Base64 编码响应内容
-                    response = Base64.encodeToString(sb.toString().getBytes("UTF-8"), Base64.NO_WRAP);
-                    error = null;
-
+                    responseData = Base64.encodeToString(sb.toString().getBytes("UTF-8"), Base64.NO_WRAP);
                 } catch (Exception e) {
-                    response = null;
-                    error = e.getMessage() != null ? e.getMessage() : "Unknown error";
-                    statusCode = 0;
+                    errorMsg = e.getMessage();
+                    if (errorMsg == null) errorMsg = "Unknown error";
                 }
 
-                // 回调到 JS（Base64 编码，无需转义）
+                final String b64Data = responseData;
+                final String err = errorMsg;
+                final int code = httpCode;
+
                 mainHandler.post(() -> {
-                    String js;
-                    if (error != null) {
-                        js = "if(window._httpCallbacks['" + callbackId + "']){window._httpCallbacks['" + callbackId + "']({error:'" + error.replace("'", "\\'") + "',status:" + statusCode + "});delete window._httpCallbacks['" + callbackId + "'];}";
+                    StringBuilder js = new StringBuilder();
+                    js.append("if(window._httpCallbacks['").append(callbackId).append("']){");
+                    if (err != null) {
+                        js.append("window._httpCallbacks['").append(callbackId).append("']({error:'").append(err.replace("'", "\\'")).append("',status:").append(code).append("});");
                     } else {
-                        js = "if(window._httpCallbacks['" + callbackId + "']){window._httpCallbacks['" + callbackId + "']({data:'" + response + "',status:" + statusCode + "});delete window._httpCallbacks['" + callbackId + "'];}";
+                        js.append("window._httpCallbacks['").append(callbackId).append("']({data:'").append(b64Data).append("',status:").append(code).append("});");
                     }
-                    webView.evaluateJavascript(js, null);
+                    js.append("delete window._httpCallbacks['").append(callbackId).append("'];");
+                    js.append("}");
+                    webView.evaluateJavascript(js.toString(), null);
                 });
             });
         }
@@ -220,10 +225,13 @@ public class MainActivity extends Activity {
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
+            // 如果 WebView 在全屏视频模式，先退出全屏
+            // 如果 WebView 可以后退，先后退
             if (webView.canGoBack()) {
                 webView.goBack();
                 return true;
             }
+            // 双击退出
             long now = System.currentTimeMillis();
             if (now - lastBackTime < 2000) {
                 finish();
@@ -251,7 +259,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        executor.shutdown();
+        httpExecutor.shutdown();
         webView.destroy();
     }
 }
