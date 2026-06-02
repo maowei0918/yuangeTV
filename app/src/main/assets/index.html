@@ -235,7 +235,7 @@ function httpGet(url, timeoutMs) {
     xhr.onreadystatechange = function() {
       if (xhr.readyState !== 4) return;
       if (xhr.status >= 200 && xhr.status < 300) {
-        resolve({ ok: true, status: xhr.status, text: function() { return Promise.responseText; }, json: function() { return Promise.resolve(JSON.parse(xhr.responseText)); } });
+        resolve({ ok: true, status: xhr.status, text: function() { return Promise.resolve(xhr.responseText); }, json: function() { return Promise.resolve(JSON.parse(xhr.responseText)); } });
       } else {
         reject(new Error('HTTP ' + xhr.status));
       }
