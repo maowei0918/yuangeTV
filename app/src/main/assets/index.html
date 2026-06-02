@@ -427,7 +427,12 @@ async function fetchTypes(domain) {
   try {
     var resp = await httpGet(getApiUrl(domain, 'type/get_list'), 8000);
     var data = await resp.json();
-    if (data.code === 1 && data.info && data.info.rows) return data.info.rows;
+    if (data.code === 1) {
+      // 兼容不同 maccms 版本的数据结构
+      if (data.info && data.info.rows) return data.info.rows;
+      if (data.class) return data.class;
+      if (data.list) return data.list;
+    }
   } catch (e) {}
   return [];
 }
