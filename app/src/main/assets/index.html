@@ -244,7 +244,20 @@ img{display:block;max-width:100%}
           } else {
             try {
               const text = atob(result.data);
-              resolve(new Response(text, {status: result.status, headers: {'Content-Type': 'application/json'}}));
+              // 构造兼容的 Response 对象（兼容旧版 WebView）
+              const response = {
+                ok: result.status >= 200 && result.status < 300,
+                status: result.status,
+                statusText: result.status >= 200 && result.status < 300 ? 'OK' : 'Error',
+                headers: { get: function() { return 'application/json'; } },
+                text: function() { return Promise.resolve(text); },
+                json: function() { return Promise.resolve(JSON.parse(text)); },
+                blob: function() { return Promise.resolve(new Blob([text])); },
+                arrayBuffer: function() { return Promise.resolve(new ArrayBuffer(0)); },
+                clone: function() { return response; },
+                bodyUsed: false
+              };
+              resolve(response);
             } catch(e) {
               reject(new Error('Base64解码失败: ' + e.message));
             }
