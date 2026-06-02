@@ -36,7 +36,7 @@ jobs:
         key: "${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}"
 
     - name: Build Debug APK
-      run: gradle assembleDebug
+      run: chmod +x gradlew && ./gradlew assembleDebug
 
     - name: Upload Debug APK
       uses: actions/upload-artifact@v4

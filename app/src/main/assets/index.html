@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+<title>视频盒子</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0f0f13;--card:#1a1a22;--card2:#222230;--border:#2a2a3a;
+  --primary:#e50914;--primary-hover:#f40612;--text:#eee;--text2:#999;--text3:#666;
+  --radius:8px;--safe-bottom:env(safe-area-inset-bottom,0px)}
+html,body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px;min-height:100vh;overflow-x:hidden}
+a{color:inherit;text-decoration:none}
+img{display:block;max-width:100%}
+
+/* ===== 头部 ===== */
+.header{position:sticky;top:0;z-index:100;background:rgba(15,15,19,.95);backdrop-filter:blur(10px);padding:12px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--border)}
+.header h1{font-size:18px;font-weight:700;color:var(--primary);flex-shrink:0}
+.search-box{flex:1;position:relative}
+.search-box input{width:100%;background:var(--card);border:1px solid var(--border);border-radius:20px;padding:8px 36px 8px 14px;color:var(--text);font-size:13px;outline:none;transition:border .2s}
+.search-box input:focus{border-color:var(--primary)}
+.search-box input::placeholder{color:var(--text3)}
+.search-box button{position:absolute;right:4px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text2);cursor:pointer;padding:4px 8px;font-size:16px}
+.header-btn{flex-shrink:0;background:var(--card);border:1px solid var(--border);border-radius:20px;padding:8px 14px;color:var(--text2);font-size:12px;cursor:pointer;transition:all .2s}
+.header-btn:hover{border-color:var(--primary);color:var(--primary)}
+
+/* ===== 域名管理弹窗 ===== */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;display:none;align-items:flex-end;justify-content:center}
+.modal-overlay.show{display:flex}
+.modal{background:var(--card);border-radius:16px 16px 0 0;width:100%;max-width:600px;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;animation:slideUp .3s ease}
+@keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+.modal-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.modal-header h2{font-size:16px}
+.modal-close{background:none;border:none;color:var(--text2);font-size:24px;cursor:pointer;padding:0 4px}
+.modal-body{padding:16px 20px;overflow-y:auto;flex:1}
+.modal-footer{padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end}
+
+.domain-list{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
+.domain-item{background:var(--card2);border-radius:var(--radius);padding:12px 14px;display:flex;align-items:center;gap:10px}
+.domain-item .drag{color:var(--text3);cursor:grab;font-size:16px}
+.domain-item .info{flex:1;min-width:0}
+.domain-item .name{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.domain-item .url{font-size:11px;color:var(--text3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.domain-item .status{font-size:11px;padding:2px 8px;border-radius:10px;flex-shrink:0}
+.domain-item .status.ok{background:rgba(34,197,94,.15);color:#22c55e}
+.domain-item .status.err{background:rgba(239,68,68,.15);color:#ef4444}
+.domain-item .status.loading{background:rgba(59,130,246,.15);color:#3b82f6}
+.domain-item .actions{display:flex;gap:4px;flex-shrink:0}
+.domain-item .actions button{background:none;border:none;color:var(--text2);cursor:pointer;padding:6px;font-size:14px;border-radius:4px;transition:background .2s}
+.domain-item .actions button:hover{background:rgba(255,255,255,.1)}
+
+.add-domain-form{display:flex;flex-direction:column;gap:10px}
+.add-domain-form input{background:var(--card2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;color:var(--text);font-size:13px;outline:none}
+.add-domain-form input:focus{border-color:var(--primary)}
+.add-domain-form input::placeholder{color:var(--text3)}
+.add-domain-form button{background:var(--primary);border:none;border-radius:var(--radius);padding:10px;color:#fff;font-size:14px;font-weight:600;cursor:pointer;transition:background .2s}
+.add-domain-form button:hover{background:var(--primary-hover)}
+
+/* ===== 分类导航 ===== */
+.nav-scroll{display:flex;overflow-x:auto;gap:6px;padding:10px 16px;scrollbar-width:none}
+.nav-scroll::-webkit-scrollbar{display:none}
+.nav-item{flex-shrink:0;padding:6px 14px;border-radius:16px;font-size:13px;cursor:pointer;transition:all .2s;background:var(--card);color:var(--text2);border:1px solid transparent}
+.nav-item:hover{color:var(--text)}
+.nav-item.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+.nav-item .domain-tag{font-size:10px;opacity:.7;margin-left:4px}
+
+/* ===== 视频网格 ===== */
+.section-title{padding:16px 16px 8px;font-size:16px;font-weight:700;display:flex;align-items:center;justify-content:space-between}
+.section-title .more{font-size:12px;color:var(--text2);cursor:pointer}
+.video-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:0 16px 16px}
+@media(min-width:600px){.video-grid{grid-template-columns:repeat(4,1fr)}}
+@media(min-width:900px){.video-grid{grid-template-columns:repeat(5,1fr)}}
+@media(min-width:1200px){.video-grid{grid-template-columns:repeat(6,1fr)}}
+
+.video-card{cursor:pointer;transition:transform .2s}
+.video-card:hover{transform:scale(1.03)}
+.video-card .thumb{position:relative;aspect-ratio:2/3;background:var(--card);border-radius:var(--radius);overflow:hidden}
+.video-card .thumb img{width:100%;height:100%;object-fit:cover}
+.video-card .thumb .badge{position:absolute;top:4px;right:4px;background:rgba(0,0,0,.7);color:#fff;font-size:10px;padding:2px 6px;border-radius:4px}
+.video-card .thumb .domain-badge{position:absolute;bottom:4px;left:4px;background:rgba(229,9,20,.8);color:#fff;font-size:9px;padding:1px 5px;border-radius:3px;max-width:80px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.video-card .info{padding:6px 2px}
+.video-card .title{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.video-card .meta{font-size:11px;color:var(--text3);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ===== 视频详情 ===== */
+.detail-page{position:fixed;inset:0;background:var(--bg);z-index:150;overflow-y:auto;display:none;animation:fadeIn .2s ease}
+.detail-page.show{display:block}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.detail-header{position:sticky;top:0;z-index:10;background:rgba(15,15,19,.95);backdrop-filter:blur(10px);padding:12px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--border)}
+.detail-header .back{background:none;border:none;color:var(--text);font-size:20px;cursor:pointer;padding:4px}
+.detail-header .title{font-size:16px;font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.detail-hero{position:relative;padding:20px 16px;display:flex;gap:16px;background:linear-gradient(180deg,rgba(229,9,20,.08) 0%,transparent 100%)}
+.detail-hero .poster{width:120px;flex-shrink:0;aspect-ratio:2/3;background:var(--card);border-radius:var(--radius);overflow:hidden}
+.detail-hero .poster img{width:100%;height:100%;object-fit:cover}
+.detail-hero .info{flex:1;display:flex;flex-direction:column;gap:8px;min-width:0}
+.detail-hero .info h2{font-size:18px;font-weight:700;line-height:1.3}
+.detail-hero .info .meta{font-size:12px;color:var(--text2);line-height:1.6}
+.detail-hero .info .meta span{color:var(--text3)}
+.detail-hero .info .desc{font-size:12px;color:var(--text2);line-height:1.6;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+
+.detail-section{padding:16px}
+.detail-section h3{font-size:15px;font-weight:700;margin-bottom:10px}
+.play-sources{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.play-source-btn{padding:6px 14px;border-radius:16px;font-size:12px;cursor:pointer;background:var(--card);color:var(--text2);border:1px solid var(--border);transition:all .2s}
+.play-source-btn:hover,.play-source-btn.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+
+.play-list{display:flex;flex-wrap:wrap;gap:6px}
+.play-episode{padding:8px 14px;border-radius:6px;font-size:12px;cursor:pointer;background:var(--card2);color:var(--text2);border:1px solid var(--border);transition:all .2s;min-width:40px;text-align:center}
+.play-episode:hover{background:var(--primary);color:#fff;border-color:var(--primary)}
+
+/* ===== 播放器 ===== */
+.player-page{position:fixed;inset:0;background:#000;z-index:300;display:none;flex-direction:column}
+.player-page.show{display:flex}
+.player-header{padding:12px 16px;display:flex;align-items:center;gap:12px;background:linear-gradient(180deg,rgba(0,0,0,.8) 0%,transparent 100%)}
+.player-header .back{background:none;border:none;color:#fff;font-size:20px;cursor:pointer;padding:4px}
+.player-header .title{font-size:14px;color:#fff;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.player-container{flex:1;display:flex;align-items:center;justify-content:center}
+.player-container video{width:100%;height:100%;max-height:100%}
+.player-container .unsupported{display:flex;flex-direction:column;align-items:center;gap:16px;color:var(--text2);padding:32px;text-align:center}
+.player-container .unsupported .icon{font-size:48px}
+.player-container .unsupported p{font-size:13px;line-height:1.6}
+.player-container .unsupported a{color:var(--primary);text-decoration:underline}
+
+/* ===== 加载 & 空状态 ===== */
+.loading{display:flex;align-items:center;justify-content:center;padding:40px;color:var(--text3);font-size:13px;gap:8px}
+.loading .spinner{width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 32px;color:var(--text3);text-align:center}
+.empty .icon{font-size:48px;margin-bottom:12px;opacity:.5}
+.empty p{font-size:13px;line-height:1.6}
+
+/* ===== 分页 ===== */
+.pagination{display:flex;align-items:center;justify-content:center;gap:8px;padding:16px}
+.pagination button{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:8px 16px;color:var(--text);font-size:13px;cursor:pointer;transition:all .2s}
+.pagination button:hover:not(:disabled){border-color:var(--primary);color:var(--primary)}
+.pagination button:disabled{opacity:.4;cursor:not-allowed}
+.pagination span{font-size:13px;color:var(--text2)}
+
+/* ===== Toast ===== */
+.toast{position:fixed;bottom:calc(80px + var(--safe-bottom));left:50%;transform:translateX(-50%) translateY(20px);background:rgba(30,30,40,.95);color:#fff;padding:10px 20px;border-radius:8px;font-size:13px;z-index:500;opacity:0;transition:all .3s;pointer-events:none;white-space:nowrap;max-width:80vw;text-align:center}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ===== 域名选择器 ===== */
+.domain-selector{display:flex;gap:6px;padding:10px 16px;overflow-x:auto;scrollbar-width:none}
+.domain-selector::-webkit-scrollbar{display:none}
+.domain-chip{flex-shrink:0;padding:5px 12px;border-radius:14px;font-size:12px;cursor:pointer;background:var(--card);color:var(--text2);border:1px solid var(--border);transition:all .2s;white-space:nowrap}
+.domain-chip:hover{color:var(--text)}
+.domain-chip.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+.domain-chip.all{background:var(--card2)}
+
+/* ===== 响应式 ===== */
+@media(max-width:400px){
+  .video-grid{grid-template-columns:repeat(2,1fr)}
+  .header h1{font-size:16px}
+}
+</style>
+</head>
+<body>
+
+<!-- 头部 -->
+<div class="header">
+  <h1>📺 视频盒子</h1>
+  <div class="search-box">
+    <input type="text" id="searchInput" placeholder="搜索视频..." onkeydown="if(event.key==='Enter')doSearch()">
+    <button onclick="doSearch()">🔍</button>
+  </div>
+  <div class="header-btn" onclick="openDomainManager()">⚙️ 域名</div>
+</div>
+
+<!-- 域名选择器 -->
+<div class="domain-selector" id="domainSelector"></div>
+
+<!-- 分类导航 -->
+<div class="nav-scroll" id="navScroll"></div>
+
+<!-- 视频列表 -->
+<div id="videoSection">
+  <div class="section-title" id="sectionTitle">推荐</div>
+  <div class="video-grid" id="videoGrid"></div>
+  <div class="pagination" id="pagination"></div>
+</div>
+
+<!-- 域名管理弹窗 -->
+<div class="modal-overlay" id="domainModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>📡 域名管理</h2>
+      <button class="modal-close" onclick="closeDomainManager()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="domain-list" id="domainList"></div>
+      <div style="border-top:1px solid var(--border);padding-top:16px">
+        <div style="font-size:13px;color:var(--text2);margin-bottom:10px">添加新域名</div>
+        <div class="add-domain-form">
+          <input type="text" id="newDomainName" placeholder="名称（如：资源站A）">
+          <input type="text" id="newDomainUrl" placeholder="域名（如：https://example.com）">
+          <button onclick="addDomain()">添加</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 视频详情页 -->
+<div class="detail-page" id="detailPage">
+  <div class="detail-header">
+    <button class="back" onclick="closeDetail()">←</button>
+    <div class="title" id="detailTitle">视频详情</div>
+  </div>
+  <div id="detailBody"></div>
+</div>
+
+<!-- 播放器页 -->
+<div class="player-page" id="playerPage">
+  <div class="player-header">
+    <button class="back" onclick="closePlayer()">←</button>
+    <div class="title" id="playerTitle">播放</div>
+  </div>
+  <div class="player-container" id="playerContainer"></div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ===== 数据存储 =====
+const STORAGE_KEY = 'tvbox_domains';
+let domains = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+let currentDomain = null; // null = 全部
+let currentTypeId = 0;
+let currentPage = 1;
+let totalPages = 1;
+let isLoading = false;
+
+// ===== 工具函数 =====
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+function normalizeUrl(url) {
+  url = url.trim();
+  if (!url) return '';
+  if (!/^https?:\/\//i.test(url)) url = 'http://' + url;
+  return url.replace(/\/+$/, '');
+}
+
+function getApiUrl(domain, path) {
+  return domain.url + '/api.php/' + path;
+}
+
+// ===== 域名管理 =====
+function openDomainManager() {
+  renderDomainList();
+  document.getElementById('domainModal').classList.add('show');
+}
+
+function closeDomainManager() {
+  document.getElementById('domainModal').classList.remove('show');
+  saveDomains();
+  renderDomainSelector();
+  loadVideos();
+}
+
+function renderDomainList() {
+  const el = document.getElementById('domainList');
+  if (!domains.length) {
+    el.innerHTML = '<div class="empty"><div class="icon">📡</div><p>还没有添加域名<br>点击下方添加你的 maccms10 资源站</p></div>';
+    return;
+  }
+  el.innerHTML = domains.map((d, i) => `
+    <div class="domain-item">
+      <span class="drag">⋮⋮</span>
+      <div class="info">
+        <div class="name">${escapeHtml(d.name)}</div>
+        <div class="url">${escapeHtml(d.url)}</div>
+      </div>
+      <span class="status ${d.status || ''}" id="ds-${i}">${d.status === 'ok' ? '✓ 正常' : d.status === 'err' ? '✗ 失败' : '待检测'}</span>
+      <div class="actions">
+        <button onclick="testDomain(${i})" title="检测">🔄</button>
+        <button onclick="removeDomain(${i})" title="删除">🗑️</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function addDomain() {
+  const name = document.getElementById('newDomainName').value.trim();
+  const url = normalizeUrl(document.getElementById('newDomainUrl').value);
+  if (!name || !url) { showToast('请填写名称和域名'); return; }
+  domains.push({ name, url, status: '', enabled: true });
+  document.getElementById('newDomainName').value = '';
+  document.getElementById('newDomainUrl').value = '';
+  renderDomainList();
+  // 自动检测
+  const idx = domains.length - 1;
+  testDomain(idx);
+}
+
+function removeDomain(i) {
+  if (confirm('确定删除这个域名吗？')) {
+    domains.splice(i, 1);
+    renderDomainList();
+  }
+}
+
+async function testDomain(i) {
+  const d = domains[i];
+  const el = document.getElementById(`ds-${i}`);
+  if (!el) return;
+  el.className = 'status loading';
+  el.textContent = '检测中...';
+  try {
+    const resp = await fetch(getApiUrl(d, 'type/get_list'), { signal: AbortSignal.timeout(8000) });
+    const data = await resp.json();
+    if (data.code === 1) {
+      d.status = 'ok';
+      el.className = 'status ok';
+      el.textContent = '✓ 正常';
+    } else {
+      d.status = 'err';
+      el.className = 'status err';
+      el.textContent = '✗ 失败';
+    }
+  } catch (e) {
+    d.status = 'err';
+    el.className = 'status err';
+    el.textContent = '✗ 失败';
+  }
+}
+
+function saveDomains() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(domains));
+}
+
+// ===== 域名选择器 =====
+function renderDomainSelector() {
+  const el = document.getElementById('domainSelector');
+  const enabled = domains.filter(d => d.enabled !== false);
+  let html = `<div class="domain-chip all ${currentDomain === null ? 'active' : ''}" onclick="selectDomain(null)">全部</div>`;
+  enabled.forEach((d, i) => {
+    const cls = currentDomain === i ? 'active' : '';
+    html += `<div class="domain-chip ${cls}" onclick="selectDomain(${i})">${escapeHtml(d.name)}</div>`;
+  });
+  el.innerHTML = html;
+}
+
+function selectDomain(idx) {
+  currentDomain = idx;
+  currentTypeId = 0;
+  currentPage = 1;
+  renderDomainSelector();
+  loadNav();
+  loadVideos();
+}
+
+// ===== 分类导航 =====
+let allTypes = [];
+
+async function loadNav() {
+  const enabled = domains.filter(d => d.enabled !== false);
+  if (!enabled.length) {
+    document.getElementById('navScroll').innerHTML = '';
+    return;
+  }
+
+  let types = [];
+  if (currentDomain !== null) {
+    types = await fetchTypes(enabled[currentDomain]);
+  } else {
+    // 合并所有域名的分类
+    const typeMap = {};
+    for (const d of enabled) {
+      const t = await fetchTypes(d);
+      t.forEach(item => {
+        if (!typeMap[item.type_id]) typeMap[item.type_id] = item;
+      });
+    }
+    types = Object.values(typeMap).sort((a, b) => a.type_sort - b.type_sort);
+  }
+  allTypes = types;
+
+  const el = document.getElementById('navScroll');
+  let html = `<div class="nav-item ${currentTypeId === 0 ? 'active' : ''}" onclick="selectType(0)">全部</div>`;
+  types.forEach(t => {
+    html += `<div class="nav-item ${currentTypeId === t.type_id ? 'active' : ''}" onclick="selectType(${t.type_id})">${escapeHtml(t.type_name)}</div>`;
+  });
+  el.innerHTML = html;
+}
+
+async function fetchTypes(domain) {
+  try {
+    const resp = await fetch(getApiUrl(domain, 'type/get_list'), { signal: AbortSignal.timeout(8000) });
+    const data = await resp.json();
+    if (data.code === 1 && data.info && data.info.rows) return data.info.rows;
+  } catch (e) {}
+  return [];
+}
+
+function selectType(typeId) {
+  currentTypeId = typeId;
+  currentPage = 1;
+  // 更新导航高亮
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+  event.target.classList.add('active');
+  loadVideos();
+}
+
+// ===== 视频列表 =====
+async function loadVideos() {
+  if (isLoading) return;
+  isLoading = true;
+  const grid = document.getElementById('videoGrid');
+  grid.innerHTML = '<div class="loading"><div class="spinner"></div>加载中...</div>';
+  document.getElementById('pagination').innerHTML = '';
+
+  const enabled = domains.filter(d => d.enabled !== false);
+  if (!enabled.length) {
+    grid.innerHTML = '<div class="empty"><div class="icon">📡</div><p>请先添加域名<br>点击右上角 ⚙️ 按钮</p></div>';
+    isLoading = false;
+    return;
+  }
+
+  const limit = 24;
+  let allVideos = [];
+  let total = 0;
+
+  try {
+    if (currentDomain !== null) {
+      // 单个域名
+      const result = await fetchVideosFromDomain(enabled[currentDomain], currentTypeId, currentPage, limit);
+      allVideos = result.list;
+      total = result.total;
+    } else {
+      // 全部域名 - 每个域名取一部分
+      const perDomain = Math.max(4, Math.floor(limit / enabled.length));
+      const promises = enabled.map(d => fetchVideosFromDomain(d, currentTypeId, 1, perDomain));
+      const results = await Promise.allSettled(promises);
+      results.forEach(r => {
+        if (r.status === 'fulfilled') {
+          allVideos = allVideos.concat(r.value.list);
+          total += r.value.total;
+        }
+      });
+    }
+
+    totalPages = Math.ceil(total / limit) || 1;
+    renderVideos(allVideos);
+    renderPagination();
+  } catch (e) {
+    grid.innerHTML = '<div class="empty"><div class="icon">❌</div><p>加载失败<br>' + escapeHtml(e.message) + '</p></div>';
+  }
+  isLoading = false;
+}
+
+async function fetchVideosFromDomain(domain, typeId, page, limit) {
+  let url = getApiUrl(domain, `vod/get_list?offset=${(page - 1) * limit}&limit=${limit}&orderby=time`);
+  if (typeId > 0) url += `&type_id=${typeId}`;
+  const resp = await fetch(url, { signal: AbortSignal.timeout(10000) });
+  const data = await resp.json();
+  if (data.code === 1 && data.info) {
+    const list = (data.info.rows || []).map(v => ({ ...v, _domain: domain }));
+    return { list, total: data.info.total || 0 };
+  }
+  return { list: [], total: 0 };
+}
+
+function renderVideos(videos) {
+  const grid = document.getElementById('videoGrid');
+  if (!videos.length) {
+    grid.innerHTML = '<div class="empty"><div class="icon">📭</div><p>暂无视频数据</p></div>';
+    return;
+  }
+  grid.innerHTML = videos.map(v => {
+    const pic = v.vod_pic || '';
+    const domainName = v._domain ? v._domain.name : '';
+    return `
+      <div class="video-card" onclick="openDetail(${v.vod_id}, '${encodeURIComponent(v._domain.url)}')">
+        <div class="thumb">
+          ${pic ? `<img src="${escapeHtml(pic)}" loading="lazy" onerror="this.style.display='none'">` : ''}
+          ${v.vod_remarks ? `<span class="badge">${escapeHtml(v.vod_remarks)}</span>` : ''}
+          ${domainName ? `<span class="domain-badge">${escapeHtml(domainName)}</span>` : ''}
+        </div>
+        <div class="info">
+          <div class="title">${escapeHtml(v.vod_name)}</div>
+          <div class="meta">${escapeHtml(v.vod_year || '')} ${escapeHtml(v.vod_area || '')}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderPagination() {
+  const el = document.getElementById('pagination');
+  if (totalPages <= 1) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <button onclick="goPage(${currentPage - 1})" ${currentPage <= 1 ? 'disabled' : ''}>上一页</button>
+    <span>${currentPage} / ${totalPages}</span>
+    <button onclick="goPage(${currentPage + 1})" ${currentPage >= totalPages ? 'disabled' : ''}>下一页</button>
+  `;
+}
+
+function goPage(p) {
+  if (p < 1 || p > totalPages) return;
+  currentPage = p;
+  loadVideos();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ===== 搜索 =====
+function doSearch() {
+  const kw = document.getElementById('searchInput').value.trim();
+  if (!kw) { showToast('请输入搜索关键词'); return; }
+  // 简单搜索：加载所有然后过滤（实际应该用 API 搜索）
+  showToast('搜索: ' + kw);
+  // TODO: 实现搜索
+}
+
+// ===== 视频详情 =====
+async function openDetail(vodId, domainUrl) {
+  const url = decodeURIComponent(domainUrl);
+  const domain = domains.find(d => d.url === url);
+  if (!domain) { showToast('域名不存在'); return; }
+
+  const page = document.getElementById('detailPage');
+  page.classList.add('show');
+  document.getElementById('detailTitle').textContent = '加载中...';
+  document.getElementById('detailBody').innerHTML = '<div class="loading"><div class="spinner"></div>加载详情...</div>';
+
+  try {
+    const resp = await fetch(getApiUrl(domain, `vod/get_detail?vod_id=${vodId}`), { signal: AbortSignal.timeout(10000) });
+    const data = await resp.json();
+    if (data.code !== 1 || !data.info) { showToast('加载详情失败'); closeDetail(); return; }
+    renderDetail(data.info, domain);
+  } catch (e) {
+    showToast('加载详情失败: ' + e.message);
+    closeDetail();
+  }
+}
+
+function renderDetail(vod, domain) {
+  document.getElementById('detailTitle').textContent = vod.vod_name;
+  const pic = vod.vod_pic || '';
+
+  // 解析播放源
+  const playFrom = (vod.vod_play_from || '').split('$$$');
+  const playUrl = (vod.vod_play_url || '').split('$$$');
+  const sources = [];
+  playFrom.forEach((from, i) => {
+    if (!from) return;
+    const episodes = (playUrl[i] || '').split('#').filter(Boolean).map(ep => {
+      const parts = ep.split('$');
+      return { name: parts[0] || '', url: parts[1] || parts[0] || '' };
+    });
+    if (episodes.length) sources.push({ from, episodes });
+  });
+
+  const body = document.getElementById('detailBody');
+  body.innerHTML = `
+    <div class="detail-hero">
+      <div class="poster">
+        ${pic ? `<img src="${escapeHtml(pic)}" onerror="this.style.display='none'">` : ''}
+      </div>
+      <div class="info">
+        <h2>${escapeHtml(vod.vod_name)}</h2>
+        <div class="meta">
+          <span>年份：</span>${escapeHtml(vod.vod_year || '未知')}<br>
+          <span>地区：</span>${escapeHtml(vod.vod_area || '未知')}<br>
+          <span>类型：</span>${escapeHtml(vod.vod_class || '未知')}<br>
+          <span>演员：</span>${escapeHtml(vod.vod_actor || '未知')}<br>
+          <span>导演：</span>${escapeHtml(vod.vod_director || '未知')}<br>
+          <span>状态：</span>${escapeHtml(vod.vod_remarks || '未知')}
+        </div>
+        <div class="desc">${escapeHtml((vod.vod_content || '').replace(/<[^>]*>/g, '').substring(0, 200))}</div>
+      </div>
+    </div>
+    ${sources.length ? sources.map((s, i) => `
+      <div class="detail-section">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <h3>📺 ${escapeHtml(s.from)}</h3>
+        </div>
+        <div class="play-list">
+          ${s.episodes.map((ep, j) => `
+            <div class="play-episode" onclick="playVideo('${encodeURIComponent(ep.url)}','${encodeURIComponent(ep.name)}','${encodeURIComponent(vod.vod_name)}')">${escapeHtml(ep.name)}</div>
+          `).join('')}
+        </div>
+      </div>
+    `).join('') : '<div class="detail-section"><div class="empty"><div class="icon">📭</div><p>暂无播放地址</p></div></div>'}
+  `;
+}
+
+function closeDetail() {
+  document.getElementById('detailPage').classList.remove('show');
+}
+
+// ===== 播放 =====
+function playVideo(url, epName, vodName) {
+  url = decodeURIComponent(url);
+  epName = decodeURIComponent(epName);
+  vodName = decodeURIComponent(vodName);
+
+  const page = document.getElementById('playerPage');
+  page.classList.add('show');
+  document.getElementById('playerTitle').textContent = vodName + ' - ' + epName;
+
+  const container = document.getElementById('playerContainer');
+
+  // 判断是否能直接播放
+  const isVideo = /\.(mp4|m3u8|flv|avi|mkv|mov|webm)(\?|$)/i.test(url);
+  const isM3U8 = /\.m3u8(\?|$)/i.test(url);
+
+  if (isVideo || isM3U8) {
+    if (isM3U8 && Hls && Hls.isSupported()) {
+      container.innerHTML = '<video id="videoPlayer" controls autoplay playsinline></video>';
+      const video = document.getElementById('videoPlayer');
+      const hls = new Hls();
+      hls.loadSource(url);
+      hls.attachMedia(video);
+    } else {
+      container.innerHTML = `<video id="videoPlayer" src="${escapeHtml(url)}" controls autoplay playsinline></video>`;
+    }
+  } else {
+    // 无法直接播放，显示链接
+    container.innerHTML = `
+      <div class="unsupported">
+        <div class="icon">🔗</div>
+        <p>该链接无法直接播放<br>请复制地址到播放器打开</p>
+        <p style="word-break:break-all;font-size:11px;color:var(--text3);max-width:80%">${escapeHtml(url)}</p>
+        <a href="${escapeHtml(url)}" target="_blank">在浏览器中打开</a>
+      </div>
+    `;
+  }
+}
+
+function closePlayer() {
+  document.getElementById('playerPage').classList.remove('show');
+  document.getElementById('playerContainer').innerHTML = '';
+}
+
+// ===== 工具 =====
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// ===== 初始化 =====
+function init() {
+  renderDomainSelector();
+  if (domains.length) {
+    loadNav();
+    loadVideos();
+    // 自动检测所有域名
+    domains.forEach((_, i) => testDomain(i));
+  } else {
+    document.getElementById('videoGrid').innerHTML = '<div class="empty"><div class="icon">📡</div><p>还没有添加域名<br>点击右上角 ⚙️ 按钮添加你的 maccms10 资源站</p></div>';
+  }
+}
+
+init();
+</script>
+<!-- HLS.js for m3u8 playback -->
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</body>
+</html>
