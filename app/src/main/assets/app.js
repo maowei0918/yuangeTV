@@ -68,16 +68,18 @@ function httpGetViaBridge(url) {
   return new Promise((resolve, reject) => {
     const callbackId = 'cb_' + (++_httpCallbackId);
     window._httpCallbacks[callbackId] = (result) => {
-      // result.data 是 Base64 编码的字符串
+      delete window._httpCallbacks[callbackId];
       if (result.error) {
-        reject(new Error(result.error));
+        reject(new Error('Bridge错误: ' + result.error + ' (HTTP ' + result.status + ')'));
       } else {
         try {
           // Base64 解码
           const decoded = atob(result.data);
+          // 调试：把前100字符显示在控制台
+          console.log('HTTP Bridge 响应(前100):', decoded.substring(0, 100));
           resolve(decoded);
         } catch (e) {
-          reject(new Error('Base64 解码失败'));
+          reject(new Error('Base64解码失败: ' + e.message));
         }
       }
     };
@@ -85,9 +87,10 @@ function httpGetViaBridge(url) {
     setTimeout(() => {
       if (window._httpCallbacks[callbackId]) {
         delete window._httpCallbacks[callbackId];
-        reject(new Error('请求超时'));
+        reject(new Error('请求超时(20s)'));
       }
     }, 20000);
+    console.log('HTTP Bridge 请求:', url);
     Android.httpGet(url, callbackId);
   });
 }
@@ -250,12 +253,15 @@ async function loadCategories() {
       throw new Error('无分类数据');
     }
   } catch (err) {
-    showToast('加载分类失败: ' + err.message);
+    console.error('加载分类失败:', err);
+    showToast('加载失败: ' + err.message);
     document.getElementById('video-list').innerHTML = `
-      <div class="empty" style="grid-column:1/-1">
+      <div class="empty" style="grid-column:1/-1;padding:20px">
         <div class="icon">❌</div>
-        <div>加载失败</div>
-        <div style="font-size:12px;margin-top:8px">${err.message}</div>
+        <div style="font-size:14px;margin:8px 0">加载失败</div>
+        <div style="font-size:11px;color:#999;word-break:break-all;max-width:100%;padding:0 10px">${err.message}</div>
+        <div style="font-size:11px;color:#666;margin-top:8px">站点: ${site.url}</div>
+        <div style="font-size:11px;color:#666">Bridge: ${typeof Android !== 'undefined' && Android.httpGet ? '可用' : '不可用'}</div>
       </div>
     `;
   }

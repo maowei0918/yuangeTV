@@ -196,10 +196,14 @@ public class MainActivity extends Activity {
                     reader.close();
                     conn.disconnect();
 
-                    responseData = Base64.encodeToString(sb.toString().getBytes("UTF-8"), Base64.NO_WRAP);
+                    String rawResponse = sb.toString();
+                    // 调试：打印前200字符
+                    android.util.Log.d("TVBox", "HTTP " + httpCode + " 响应(前200): " + rawResponse.substring(0, Math.min(200, rawResponse.length())));
+                    responseData = Base64.encodeToString(rawResponse.getBytes("UTF-8"), Base64.NO_WRAP);
                 } catch (Exception e) {
                     errorMsg = e.getMessage();
                     if (errorMsg == null) errorMsg = "Unknown error";
+                    android.util.Log.e("TVBox", "HTTP 请求失败: " + errorMsg);
                 }
 
                 final String b64Data = responseData;
