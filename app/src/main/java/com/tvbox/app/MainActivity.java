@@ -62,8 +62,7 @@ public class MainActivity extends Activity {
                 String lower = url.toLowerCase();
                 if (lower.contains(".m3u8") || lower.contains(".mp4") || lower.contains(".flv")
                     || lower.contains(".avi") || lower.contains(".mkv") || lower.contains(".mov")
-                    || lower.contains(".webm") || lower.contains(".ts")
-                    || lower.contains("m3u8?") || lower.contains("video") || lower.contains("stream")) {
+                    || lower.contains(".webm") || lower.contains(".ts")) {
                     openVideo(url, "");
                     return true;
                 }
@@ -140,20 +139,87 @@ public class MainActivity extends Activity {
                 mainHandler.post(new Runnable() {
                     public void run() {
                         try {
-                            Intent intent = new Intent(Intent.ACTION_VIEW);
-                            intent.setDataAndType(Uri.parse(url), "video/*");
-                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                            startActivity(intent);
-                        } catch (Exception e) { toast("未找到视频播放器"); }
+                            String lower = url.toLowerCase();
+                            if (lower.contains("mgtv.com") || lower.contains("iqiyi.com") || lower.contains("youku.com")
+                                || lower.contains("bilibili.com") || lower.contains("qq.com") || lower.contains("pptv.com")
+                                || lower.contains("sohu.com") || lower.contains("le.com") || lower.contains("fun.tv")
+                                || lower.contains("miguvideo.com") || lower.contains("wasu.cn")) {
+                                openWebPlayer(url);
+                            } else {
+                                Intent intent = new Intent(Intent.ACTION_VIEW);
+                                intent.setDataAndType(Uri.parse(url), "video/*");
+                                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                                startActivity(intent);
+                            }
+                        } catch (Exception e) { toast("播放失败"); }
                     }
                 });
+            }
+
+            private void openWebPlayer(final String url) {
+                try {
+                    final WebView playerView = new WebView(MainActivity.this);
+                    WebSettings ps = playerView.getSettings();
+                    ps.setJavaScriptEnabled(true);
+                    ps.setDomStorageEnabled(true);
+                    ps.setAllowFileAccess(true);
+                    ps.setAllowContentAccess(true);
+                    ps.setAllowFileAccessFromFileURLs(true);
+                    ps.setAllowUniversalAccessFromFileURLs(true);
+                    ps.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+                    ps.setMediaPlaybackRequiresUserGesture(false);
+                    ps.setCacheMode(WebSettings.LOAD_DEFAULT);
+                    playerView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+                    playerView.setWebViewClient(new WebViewClient() {
+                        @Override
+                        public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                            String u = request.getUrl().toString();
+                            if (u.startsWith("intent:")) return true;
+                            String l = u.toLowerCase();
+                            if (l.contains(".m3u8") || l.contains(".mp4") || l.contains(".flv")) {
+                                openVideo(u, "");
+                                return true;
+                            }
+                            return false;
+                        }
+                    });
+                    playerView.setWebChromeClient(new WebChromeClient() {
+                        private View customView;
+                        private CustomViewCallback customViewCallback;
+                        @Override
+                        public void onShowCustomView(View view, CustomViewCallback callback) {
+                            if (customView != null) { callback.onCustomViewHidden(); return; }
+                            customView = view; customViewCallback = callback;
+                            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                            setContentView(view);
+                        }
+                        @Override
+                        public void onHideCustomView() {
+                            if (customView == null) return;
+                            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                            setContentView(webView);
+                            customViewCallback.onCustomViewHidden();
+                            customView = null;
+                        }
+                    });
+                    playerView.loadUrl(url);
+                    setContentView(playerView);
+                } catch (Exception e) { toast("播放器启动失败"); }
             }
         }, "NativeHttp");
 
         webView.setDownloadListener(new DownloadListener() {
             @Override
             public void onDownloadStart(String url, String userAgent, String contentDisposition, String mimeType, long contentLength) {
-                openVideo(url, "");
+                String lower = url.toLowerCase();
+                if (lower.contains("mgtv.com") || lower.contains("iqiyi.com") || lower.contains("youku.com")
+                    || lower.contains("bilibili.com") || lower.contains("qq.com") || lower.contains("pptv.com")
+                    || lower.contains("sohu.com") || lower.contains("le.com") || lower.contains("fun.tv")
+                    || lower.contains("miguvideo.com") || lower.contains("wasu.cn")) {
+                    openWebPlayer(url);
+                } else {
+                    openVideo(url, "");
+                }
             }
         });
 
